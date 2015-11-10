@@ -41,6 +41,7 @@ public:
 
 		virtual ~Object() {}
 		virtual bool collides(const blib::math::Ray &ray) { return false; };
+		virtual std::vector<glm::vec3> collisions(const blib::math::Ray &ray) { return std::vector<glm::vec3>();  };
 	};
 
 
@@ -158,7 +159,7 @@ public:
 	std::map<std::string, Rsm*> rsmCache;
 
 	Rsw(const std::string &fileName, bool loadModels = true);
-	Rsw();
+	Rsw(int width, int height);
 	~Rsw();
 
 	Rsm* getRsm( const std::string &fileName );

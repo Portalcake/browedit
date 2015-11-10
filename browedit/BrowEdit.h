@@ -47,10 +47,13 @@ class BrowEdit : public blib::App, public blib::MouseListener
 	{
 		TextureEdit,
 		ObjectEdit,
-		GatEdit,
 		WallEdit,
 		HeightEdit,
 		DetailHeightEdit,
+		GatEdit,
+		DetailGatEdit,
+		LightmapEdit,
+		ColorEdit,
 	};
 
 	EditMode editMode;
@@ -67,7 +70,6 @@ class BrowEdit : public blib::App, public blib::MouseListener
 	{
 		s_texture,
 		s_texture2,
-		sampleSize,
 	};
 
 
@@ -115,6 +117,7 @@ public:
 	int textureRot;
 	bool textureFlipH;
 	bool textureFlipV;
+	inline const blib::json::Value &getConfig() { return config; }
 
 
 	TranslatorTool translatorTool;
@@ -161,6 +164,8 @@ public:
 	void heightEditUpdate();
 	void detailHeightEditUpdate();
 	void wallEditUpdate();
+	void gatEditUpdate();
+	void detailGatEditUpdate();
 
 
 	Rsw::Model* newModel;
@@ -181,6 +186,6 @@ public:
 
 	int version;
 	void loadJsPlugins();
-
+	void lightmapEditUpdate();
 };
 

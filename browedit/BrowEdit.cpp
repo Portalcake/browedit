@@ -7,6 +7,7 @@
 #include "windows/MessageWindow.h"
 #include "windows/HelpWindow.h"
 #include "windows/NewMapWindow.h"
+#include "windows/MapSettingsWindow.h"
 
 #include "actions/TextureEditAction.h"
 #include "actions/ObjectEditAction.h"
@@ -16,6 +17,7 @@
 #include <BroLib/GrfFileSystemHandler.h>
 #include <BroLib/Map.h>
 #include <BroLib/Gnd.h>
+#include <BroLib/Gat.h>
 
 #include <blib/Renderer.h>
 #include <blib/SpriteBatch.h>
@@ -37,6 +39,7 @@
 #include <blib/util/Log.h>
 #include <blib/linq.h>
 
+#include <direct.h>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <algorithm>
@@ -187,7 +190,7 @@ void BrowEdit::init()
 	highlightRenderState.activeShader = resourceManager->getResource<blib::Shader>("highlight");
 	highlightRenderState.activeShader->bindAttributeLocation("a_position", 0);
 	highlightRenderState.activeShader->bindAttributeLocation("a_texcoord", 1);
-	highlightRenderState.activeShader->bindAttributeLocation("a_normal", 1);
+	highlightRenderState.activeShader->bindAttributeLocation("a_normal", 3);
 	highlightRenderState.activeShader->setUniformName(HighlightShaderUniforms::s_texture, "s_texture", blib::Shader::Int);
 	highlightRenderState.activeShader->setUniformName(HighlightShaderUniforms::color, "color", blib::Shader::Vec4);
 	highlightRenderState.activeShader->setUniformName(HighlightShaderUniforms::diffuse, "diffuse", blib::Shader::Float);
@@ -212,11 +215,9 @@ void BrowEdit::init()
 	composeRenderState.activeShader->bindAttributeLocation("a_texcoord", 1);
 	composeRenderState.activeShader->setUniformName(ComposeShaderUniforms::s_texture, "s_texture", blib::Shader::Int);
 	composeRenderState.activeShader->setUniformName(ComposeShaderUniforms::s_texture2, "s_texture2", blib::Shader::Int);
-	composeRenderState.activeShader->setUniformName(ComposeShaderUniforms::sampleSize, "sampleSize", blib::Shader::Vec2);
 	composeRenderState.activeShader->finishUniformSetup();
 	composeRenderState.activeShader->setUniform(ComposeShaderUniforms::s_texture, 0);
 	composeRenderState.activeShader->setUniform(ComposeShaderUniforms::s_texture2, 1);
-	composeRenderState.activeShader->setUniform(ComposeShaderUniforms::sampleSize, glm::vec2(1.0f / 1024.0f, 1.0f / 1024.0f));
 
 
 
@@ -243,7 +244,13 @@ void BrowEdit::init()
 		new blib::BackgroundTask<bool>(this, [this]()
 		{
 			if (map)
-				map->save(config["data"]["ropath"].asString() + "/" + map->getFileName());
+			{
+				char prevDir[1024];
+				_getcwd(prevDir, 1024);
+				_chdir(blib::util::replace(config["data"]["ropath"].asString(), "/", "\\").c_str());
+				map->save(map->getFileName());
+				_chdir(prevDir);
+			}
 			return true;
 		}, [dialog](bool bla)
 		{
@@ -256,7 +263,13 @@ void BrowEdit::init()
 		new blib::BackgroundTask<bool>(this, [this]()
 		{
 			if (map)
-				map->saveHeightmap(config["data"]["ropath"].asString() + "/" + map->getFileName() + ".height.png");
+			{
+				char prevDir[1024];
+				_getcwd(prevDir, 1024);
+				_chdir(blib::util::replace(config["data"]["ropath"].asString(), "/", "\\").c_str());
+				map->saveHeightmap(map->getFileName() + ".height.png");
+				_chdir(prevDir);
+			}
 			return true;
 		}, [dialog](bool bla)	{	dialog->close();	});
 	});
@@ -272,7 +285,84 @@ void BrowEdit::init()
 	});
 
 
-	rootMenu->setAction("display/help", [this]() { new HelpWindow(resourceManager, this);  });
+	rootMenu->setAction("Actions/Calculate Lightmaps", [this]()
+	{
+		if (!map)
+			return;
+		Log::out << "Making lightmaps unique" << Log::newline;
+		map->getGnd()->makeLightmapsUnique();
+		mapRenderer.setAllDirty();
+
+		int height = map->getGnd()->height;
+		float s = 10 / 6.0f;
+		Log::out << "Making lightmap..." << Log::newline;
+		for (int x = 0; x < map->getGnd()->width; x++)
+		{
+			for (int y = 0; y < map->getGnd()->height; y++)
+			{
+				Gnd::Cube* cube = map->getGnd()->cubes[x][y];
+				int tileId = cube->tileUp;
+				if (tileId == -1)
+					continue;
+				Gnd::Tile* tile = map->getGnd()->tiles[tileId];
+				assert(tile && tile->lightmapIndex != -1);
+				Gnd::Lightmap* lightmap = map->getGnd()->lightmaps[tile->lightmapIndex];
+				for (int xx = 1; xx < 7; xx++)
+				{
+					for (int yy = 1; yy < 7; yy++)
+					{
+						int intensity = 255;
+						//todo: use proper height with raycasting
+						glm::vec3 groundPos(10 * x + s * (xx - 1), -(cube->h1 + cube->h2 + cube->h3 + cube->h4) / 4.0f, 10 * height + 10 - 10 * y - s * (yy - 1));
+						blib::math::Ray ray(groundPos, glm::vec3(-1, 1.45f, 1));
+
+
+
+						for (Rsw::Object* o : map->getRsw()->objects)
+						{
+							if (o->collides(ray))
+							{
+								intensity = 127;
+								break;
+							}
+						}
+
+
+						lightmap->data[xx + 8 * yy] = intensity;
+
+						lightmap->data[64 + 3 * (xx + 8 * yy) + 0] = 0;
+						lightmap->data[64 + 3 * (xx + 8 * yy) + 1] = 0;
+						lightmap->data[64 + 3 * (xx + 8 * yy) + 2] = 0;
+					}
+				}
+			}
+		}
+		map->getGnd()->makeLightmapBorders();
+	});
+
+
+	rootMenu->setAction("Actions/Smooth Lightmaps", [this]()
+	{
+		if (!map)
+			return;
+		Log::out << "Making lightmaps unique" << Log::newline;
+		map->getGnd()->makeLightmapsUnique();
+		map->getGnd()->makeLightmapsSmooth();
+		map->getGnd()->makeLightmapBorders();
+		mapRenderer.setAllDirty();
+	});
+
+	rootMenu->setAction("Actions/Unique Lightmaps", [this]()
+	{
+		if (!map)
+			return;
+		map->getGnd()->makeLightmapsUnique();
+		mapRenderer.setAllDirty();
+	});
+
+
+	rootMenu->setAction("window/Help", [this]() { new HelpWindow(resourceManager, this);  });
+//	rootMenu->setAction("window/Map Settings", [this]() { new MapSettingsWindow(resourceManager, this); });
 	rootMenu->linkToggle("display/objects", &mapRenderer.drawObjects);
 	rootMenu->linkToggle("display/shadows", &mapRenderer.drawShadows);
 	rootMenu->linkToggle("display/lights", &mapRenderer.drawLights);
@@ -283,6 +373,11 @@ void BrowEdit::init()
 	rootMenu->setAction("editmode/heightedit", std::bind(&BrowEdit::setEditMode, this, EditMode::HeightEdit));
 	rootMenu->setAction("editmode/detail heightedit", std::bind(&BrowEdit::setEditMode, this, EditMode::DetailHeightEdit));
 	rootMenu->setAction("editmode/walledit", std::bind(&BrowEdit::setEditMode, this, EditMode::WallEdit));
+	rootMenu->setAction("editmode/gatedit", std::bind(&BrowEdit::setEditMode, this, EditMode::GatEdit));
+	rootMenu->setAction("editmode/detail gatedit", std::bind(&BrowEdit::setEditMode, this, EditMode::DetailGatEdit));
+	rootMenu->setAction("editmode/Lightmap edit", std::bind(&BrowEdit::setEditMode, this, EditMode::LightmapEdit));
+	rootMenu->setAction("editmode/Color Edit", std::bind(&BrowEdit::setEditMode, this, EditMode::ColorEdit));
+
 
 	
 	rootMenu->setAction("objecttools/move", std::bind(&BrowEdit::setObjectEditMode, this, ObjectEditModeTool::Translate));
@@ -321,6 +416,7 @@ void BrowEdit::update( double elapsedTime )
 	mapRenderer.orthoDistance = camera->ortho ? camera->distance : 0;
 	mapRenderer.drawTextureGrid = dynamic_cast<blib::wm::ToggleMenuItem*>(rootMenu->getItem("display/grid"))->getValue() && editMode == EditMode::TextureEdit; // TODO: fix this
 	mapRenderer.drawObjectGrid = dynamic_cast<blib::wm::ToggleMenuItem*>(rootMenu->getItem("display/grid"))->getValue() && (editMode == EditMode::ObjectEdit || editMode == EditMode::HeightEdit || editMode == EditMode::DetailHeightEdit || editMode == EditMode::WallEdit); // TODO: fix this
+	mapRenderer.drawGat = editMode == EditMode::GatEdit || editMode == EditMode::DetailGatEdit;
 
 	if (mouseState.leftButton)
 		mouseRay = mapRenderer.mouseRay;
@@ -407,7 +503,7 @@ void BrowEdit::update( double elapsedTime )
 					for (int y = 0; y < map->getGnd()->height; y++)
 					{
 						for (int i = 0; i < 4; i++)
-							map->getGnd()->cubes[x][y]->height[i] = -(-map->heightImportCubes[x][y].height[i] * (map->heightImportMax - map->heightImportMin) + map->heightImportMin);
+							map->getGnd()->cubes[x][y]->heights[i] = -(-map->heightImportCubes[x][y].heights[i] * (map->heightImportMax - map->heightImportMin) + map->heightImportMin);
 						mapRenderer.setTileDirty(x, y);
 					}
 				}
@@ -424,30 +520,39 @@ void BrowEdit::update( double elapsedTime )
 			detailHeightEditUpdate();
 		else if (editMode == EditMode::WallEdit)
 			wallEditUpdate();
+		else if (editMode == EditMode::GatEdit)
+			gatEditUpdate();
+		else if (editMode == EditMode::DetailGatEdit)
+			detailGatEditUpdate();
+		else if (editMode == EditMode::LightmapEdit)
+			lightmapEditUpdate();
 	}
-	lastmouse3d = mapRenderer.mouse3d;
-	lastKeyState = keyState;
-	lastMouseState = mouseState;
 
 	wm->keyPressed = false;
 
 	if (!running)
 		isolate->Exit();
+	lastmouse3d = mapRenderer.mouse3d;
+	lastKeyState = keyState;
+	lastMouseState = mouseState;
 }
 
 void BrowEdit::draw()
 {
+	if (map)
+	{
+		mapRenderer.render(renderer, glm::vec2(mouseState.position));
+	}
 	renderer->clear(glm::vec4(0.1f, 0.1f, 0.1f, 1.0f), blib::Renderer::Color | blib::Renderer::Depth);
 
 	spriteBatch->begin();
 	spriteBatch->draw(gradientBackground, blib::math::easyMatrix(gradientBackground, blib::math::Rectangle(0,0,window->getWidth(), window->getHeight())));
 	spriteBatch->end();
 
+
+
 	if (map)
 	{
-		mapRenderer.render(renderer, glm::vec2(mouseState.position));
-
-
 		//depthinfo will be gone after rendering the fbo, so render things that need depthtesting to the fbo here
 		composeRenderState.activeTexture[0] = mapRenderer.fbo;
 
@@ -463,7 +568,6 @@ void BrowEdit::draw()
 		};
 
 		renderer->drawTriangles(verts, 6, composeRenderState);
-
 
 		int cursorX = (int)glm::floor(mapRenderer.mouse3d.x / 10);
 		int cursorY = map->getGnd()->height - (int)glm::floor(mapRenderer.mouse3d.z / 10);
@@ -845,7 +949,7 @@ void BrowEdit::draw()
 					int cursorY = map->getGnd()->height - (int)glm::round(mapRenderer.mouse3d.z / 10);
 
 
-					if (map->inMap(cursorX, cursorY))
+					if (map->inMap(cursorX, cursorY) && map->inMap(cursorX + 1, cursorY + 1))
 					{
 						glm::vec4 heights = map->getHeightsAt(cursorX + 1, cursorY + 1);
 						float minHeight = glm::min(glm::min(glm::min(-heights.x, -heights.y), -heights.z), -heights.w);
@@ -957,6 +1061,147 @@ void BrowEdit::draw()
 		}
 
 
+		if (editMode == EditMode::GatEdit)
+		{
+			std::vector<blib::VertexP3> verts;
+			Gat* gat = map->getGat();
+
+			if (!selectLasso.empty())
+			{
+				for (size_t i = 0; i < selectLasso.size(); i++)
+				{
+					int x = selectLasso[i].x;
+					int y = selectLasso[i].y;
+					
+					Gat::Tile* cube = gat->tiles[x][y];
+
+					blib::VertexP3 v1(glm::vec3(5 * x, -cube->heights[2] + 0.1f, 5 * gat->height - 5 * y + 5));
+					blib::VertexP3 v2(glm::vec3(5 * x + 5, -cube->heights[3] + 0.1f, 5 * gat->height - 5 * y + 5));
+					blib::VertexP3 v3(glm::vec3(5 * x, -cube->heights[0] + 0.1f, 5 * gat->height - 5 * y + 10));
+					blib::VertexP3 v4(glm::vec3(5 * x + 5, -cube->heights[1] + 0.1f, 5 * gat->height - 5 * y + 10));
+
+					verts.push_back(v1); verts.push_back(v2); verts.push_back(v3);
+					verts.push_back(v3); verts.push_back(v2); verts.push_back(v4);
+				}
+			}
+
+			for (int x = 0; x < gat->width; x++)
+			{
+				for (int y = 0; y < gat->height; y++)
+				{
+					Gat::Tile* cube = gat->tiles[x][y];
+					if (!cube->selected)
+						continue;
+					blib::VertexP3 v1(glm::vec3(5 * x, -cube->heights[2] + 0.1f, 5 * gat->height - 5 * y+5));
+					blib::VertexP3 v2(glm::vec3(5 * x + 5, -cube->heights[3] + 0.1f, 5 * gat->height - 5 * y+5));
+					blib::VertexP3 v3(glm::vec3(5 * x, -cube->heights[0] + 0.1f, 5 * gat->height - 5 * y+10));
+					blib::VertexP3 v4(glm::vec3(5 * x + 5, -cube->heights[1] + 0.1f, 5 * gat->height - 5 * y+10 ));
+
+					verts.push_back(v1); verts.push_back(v2); verts.push_back(v3);
+					verts.push_back(v3); verts.push_back(v2); verts.push_back(v4);
+				}
+			}
+			highlightRenderState.activeShader->setUniform(HighlightShaderUniforms::modelviewMatrix, mapRenderer.cameraMatrix);
+			highlightRenderState.activeShader->setUniform(HighlightShaderUniforms::projectionMatrix, mapRenderer.projectionMatrix);
+			highlightRenderState.activeShader->setUniform(HighlightShaderUniforms::color, glm::vec4(1,1,1,0.5f));
+			highlightRenderState.activeShader->setUniform(HighlightShaderUniforms::texMult, glm::vec4(0, 0, 0, 0));
+			highlightRenderState.activeShader->setUniform(HighlightShaderUniforms::diffuse, 0.0f);
+			highlightRenderState.activeTexture[0] = NULL;
+			highlightRenderState.activeVbo = NULL;
+			renderer->drawTriangles(verts, highlightRenderState);
+			highlightRenderState.activeTexture[0] = NULL;
+		}
+		if (editMode == EditMode::DetailGatEdit)
+		{
+			std::vector<blib::VertexP3> verts;
+			Gat* gat = map->getGat();
+			if (map->inMap(cursorX, cursorY))
+			{
+				if (!mouseState.leftButton)
+				{
+					cursorX = (int)glm::floor(mapRenderer.mouse3d.x / 5);
+					cursorY = map->getGat()->height - (int)glm::floor(mapRenderer.mouse3d.z / 5) + 1;
+
+					detailHeightCursor = glm::vec2(cursorX, cursorY);
+
+					float cursorXOff = -(cursorX - (mapRenderer.mouse3d.x / 5));
+					float cursorYOff = cursorY - (map->getGat()->height - (mapRenderer.mouse3d.z / 5) + 1);
+
+					detailHeightOffset = glm::vec2(cursorXOff, cursorYOff);
+				}
+				auto drawTriangle = [&verts, this, gat](int x, int y, float xoff, float yoff){
+					if (!map->inMap(x/2, y/2))
+						return;
+					Gat::Tile* tile = gat->tiles[x][y];
+					blib::VertexP3 allVerts[4] = {
+						blib::VertexP3(glm::vec3(5 * x, -tile->heights[2] + 0.1f, 5 * gat->height - 5 * y + 5)),
+						blib::VertexP3(glm::vec3(5 * x + 5, -tile->heights[3] + 0.1f, 5 * gat->height - 5 * y + 5)),
+						blib::VertexP3(glm::vec3(5 * x, -tile->heights[0] + 0.1f, 5 * gat->height - 5 * y + 10)),
+						blib::VertexP3(glm::vec3(5 * x + 5, -tile->heights[1] + 0.1f, 5 * gat->height - 5 * y + 10)),
+					};
+					int primIndex = 0;
+					if (xoff < 0.5 && yoff < 0.5)
+						primIndex = 0;
+					else if (xoff > 0.5 && yoff < 0.5)
+						primIndex = 1;
+					else if (xoff < 0.5 && yoff > 0.5)
+						primIndex = 2;
+					else if (xoff > 0.5 && yoff > 0.5)
+						primIndex = 3;
+
+					verts.push_back(allVerts[primIndex]);
+					if (xoff < 0.5)
+						verts.push_back(allVerts[(primIndex + 1) % 4]);
+					else
+						verts.push_back(allVerts[(primIndex + 3) % 4]);
+					verts.push_back(allVerts[(primIndex + 2) % 4]);
+				};
+
+
+
+				drawTriangle(detailHeightCursor.x, detailHeightCursor.y, detailHeightOffset.x, detailHeightOffset.y);
+				if (dynamic_cast<blib::wm::ToggleMenuItem*>(rootMenu->getItem("heighttools/connect"))->getValue())
+				{
+					if (detailHeightOffset.x < 0.5)
+					{
+						drawTriangle(detailHeightCursor.x - 1, detailHeightCursor.y, 1, detailHeightOffset.y);
+						if (detailHeightOffset.y > 0.5)
+							drawTriangle(detailHeightCursor.x - 1, detailHeightCursor.y - 1, 1, 0);
+						else
+							drawTriangle(detailHeightCursor.x - 1, detailHeightCursor.y + 1, 1, 1);
+					}
+					else
+					{
+						drawTriangle(detailHeightCursor.x + 1, detailHeightCursor.y, 0, detailHeightOffset.y);
+						if (detailHeightOffset.y > 0.5)
+							drawTriangle(detailHeightCursor.x + 1, detailHeightCursor.y - 1, 0, 0);
+						else
+							drawTriangle(detailHeightCursor.x + 1, detailHeightCursor.y + 1, 0, 1);
+					}
+
+					if (detailHeightOffset.y > 0.5)
+						drawTriangle(detailHeightCursor.x, detailHeightCursor.y - 1, detailHeightOffset.x, 0);
+					else
+						drawTriangle(detailHeightCursor.x, detailHeightCursor.y + 1, detailHeightOffset.x, 1);
+				}
+
+				highlightRenderState.activeShader->setUniform(HighlightShaderUniforms::modelviewMatrix, mapRenderer.cameraMatrix);
+				highlightRenderState.activeShader->setUniform(HighlightShaderUniforms::projectionMatrix, mapRenderer.projectionMatrix);
+				highlightRenderState.activeShader->setUniform(HighlightShaderUniforms::color, glm::vec4(1.0f, 1.0f, 1.0f, 0.75f));
+				highlightRenderState.activeShader->setUniform(HighlightShaderUniforms::texMult, glm::vec4(0, 0, 0, 0));
+				highlightRenderState.activeShader->setUniform(HighlightShaderUniforms::diffuse, 0.0f);
+				highlightRenderState.activeTexture[0] = NULL;
+				highlightRenderState.activeVbo = NULL;
+				renderer->drawTriangles(verts, highlightRenderState);
+				highlightRenderState.activeShader->setUniform(HighlightShaderUniforms::color, glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
+				highlightRenderState.renderStyle = blib::RenderState::WIREFRAME;
+				renderer->drawTriangles(verts, highlightRenderState);
+				highlightRenderState.renderStyle = blib::RenderState::FILLED;
+			}
+		}
+
+
+
 
 		if (!map->heightImportCubes.empty())
 		{
@@ -1003,6 +1248,8 @@ void BrowEdit::draw()
 			editModeString = "Object Edit";
 		else if (editMode == EditMode::GatEdit)
 			editModeString = "GAT Edit";
+		else if (editMode == EditMode::DetailGatEdit)
+			editModeString = "Detail GAT Edit";
 		else if (editMode == EditMode::HeightEdit)
 			editModeString = "Height Edit";
 		else if (editMode == EditMode::DetailHeightEdit)
@@ -1104,8 +1351,6 @@ void BrowEdit::addModel(const std::string &fileName)
 	newModel->model = map->getRsw()->getRsm(newModel->fileName);
 	newModel->selected = true;
 
-	std::for_each(map->getRsw()->objects.begin(), map->getRsw()->objects.end(), [](Rsw::Object* o) { o->selected = false; });
-
 	map->getRsw()->objects.push_back(newModel);
 }
 
@@ -1148,4 +1393,59 @@ void JsRunner::run()
 	v8::Local<v8::Function> f = v8::Local<v8::Function>::New(isolate, func);
 	v8::Local<v8::Object> o = v8::Local<v8::Object>::New(isolate, obj);
 	f->Call(o, 0, args);
+}
+
+
+
+void BrowEdit::lightmapEditUpdate()
+{
+	if (mouseState.leftButton || lastMouseState.rightButton)
+	{
+		int cursorX = (int)glm::floor(mapRenderer.mouse3d.x / 10);
+		int cursorY = map->getGnd()->height - (int)glm::floor(mapRenderer.mouse3d.z / 10);
+		if (cursorX >= 0 && cursorX < map->getGnd()->width && cursorY >= 0 && cursorY < map->getGnd()->height)
+		{
+			Gnd::Cube* cube = map->getGnd()->cubes[cursorX][cursorY];
+			assert(cube);
+			if (cube->tileUp >= 0)
+			{
+				Gnd::Tile* tile = map->getGnd()->tiles[cube->tileUp]; // TODO: determine which one to get, the floor or the walls
+				Gnd::Lightmap* lightmap = map->getGnd()->lightmaps[tile->lightmapIndex];
+				assert(lightmap);
+				
+				float cursorXOff = -(cursorX - (mapRenderer.mouse3d.x / 10));
+				float cursorYOff = cursorY - (map->getGnd()->height - (mapRenderer.mouse3d.z / 10));
+				if (cursorXOff >= 0 && cursorXOff <= 1 && cursorYOff >= 0 && cursorYOff <= 1)
+				{
+					int px = (int)(cursorXOff * 6) + 1;
+					int py = (int)((1-cursorYOff) * 6) + 1;
+					
+					int oldVal = lightmap->data[px + 8 * py];
+					lightmap->data[px + 8 * py] = mouseState.leftButton ? 127 : 255;
+					if (lightmap->data[px + 8 * py] != oldVal)
+						mapRenderer.setShadowDirty();
+				}
+
+			}
+			
+		}
+
+
+	}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 }

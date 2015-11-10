@@ -29,12 +29,27 @@ public:
 	class Lightmap
 	{
 	public:
-		char data[256];
+		Lightmap() { memset(data, 0, 256 * sizeof(unsigned char)); };
+		Lightmap(const Lightmap& other)
+		{
+			memcpy(data, other.data, 256 * sizeof(unsigned char));
+		}
+		unsigned char data[256];
 	};
 
 	class Tile
 	{
 	public:
+		Tile() {};
+		Tile(const Tile& o) {
+			v1 = o.v1;
+			v2 = o.v2;
+			v3 = o.v3;
+			v4 = o.v4;
+			textureIndex = o.textureIndex;
+			lightmapIndex = o.lightmapIndex;
+			color = o.color;
+		}
 		glm::vec2 v1,v2,v3,v4;
 		int textureIndex;
 		int lightmapIndex;
@@ -54,7 +69,7 @@ public:
 			{
 				float h1, h2, h3, h4;
 			};
-			float height[4];
+			float heights[4];
 		};
 		int tileUp, tileSide, tileFront;
 		bool selected;
@@ -81,6 +96,8 @@ public:
 	std::vector<std::vector<Cube*> > cubes;
 
 
-
-
+	void makeLightmapsUnique();
+	void makeLightmapBorders();
+	int getLightmapBrightness(int x, int y, int lightmapX, int lightmapY);
+	void makeLightmapsSmooth();
 };

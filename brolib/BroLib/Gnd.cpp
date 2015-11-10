@@ -1,5 +1,7 @@
 #include "Gnd.h"
 
+#include <set>
+
 #include <blib/util/FileSystem.h>
 #include <blib/util/Log.h>
 #include <blib/linq.h>
@@ -58,7 +60,10 @@ Gnd::Gnd( const std::string &fileName )
 	if(header[0] == 'G' && header[1] == 'R' && header[2] == 'G' && header[3] == 'N')
 		version = file->readShort();
 	else
+	{
 		version = 0;
+		Log::out << "GND: Invalid GND file" << Log::newline;
+	}
 
 	int textureCount = 0;
 
@@ -112,7 +117,7 @@ Gnd::Gnd( const std::string &fileName )
 		for(int i = 0; i < lightmapCount; i++)
 		{
 			Lightmap* lightmap = new Lightmap();
-			file->read(lightmap->data, 256);
+			file->read((char*)lightmap->data, 256);
 			lightmaps.push_back(lightmap);
 		}
 
@@ -262,7 +267,7 @@ void Gnd::save(std::string fileName)
 		pFile->writeInt(gridSizeCell);
 
 		for (size_t i = 0; i < lightmaps.size(); i++)
-			pFile->write(lightmaps[i]->data, 256);
+			pFile->write((char*)lightmaps[i]->data, 256);
 
 		pFile->writeInt(tiles.size());
 		for (size_t i = 0; i < tiles.size(); i++)
@@ -367,4 +372,118 @@ void Gnd::Cube::calcNormals(Gnd* gnd, int x, int y)
 		}
 		normals[i] = glm::normalize(normals[i]);
 	}
+}
+
+
+void Gnd::makeLightmapsUnique()
+{
+	std::set<int> taken;
+	for (int y = 0; y < height; y++)
+	{
+		for (int x = 0; x < width; x++)
+		{
+			if (cubes[x][y]->tileUp == -1)
+				continue;
+			if (taken.find(cubes[x][y]->tileUp) == taken.end())
+				taken.insert(cubes[x][y]->tileUp);
+			else
+			{
+				Tile* t = new Tile(*tiles[cubes[x][y]->tileUp]);
+				cubes[x][y]->tileUp = tiles.size();
+				tiles.push_back(t);
+			}
+		}
+	}
+	taken.clear();
+	for (Tile* t : tiles)
+	{
+		if (taken.find(t->lightmapIndex) == taken.end())
+			taken.insert(t->lightmapIndex);
+		else
+		{
+			Lightmap* l = new Lightmap(*lightmaps[t->lightmapIndex]);
+			t->lightmapIndex = lightmaps.size();
+			lightmaps.push_back(l);
+		}
+	}
+}
+
+void Gnd::makeLightmapBorders()
+{
+	makeLightmapsUnique();
+	Log::out << "Fixing borders" << Log::newline;
+	for (int x = 0; x < width; x++)
+	{
+		for (int y = 0; y < height; y++)
+		{
+			Gnd::Cube* cube = cubes[x][y];
+			int tileId = cube->tileUp;
+			if (tileId == -1)
+				continue;
+			Gnd::Tile* tile = tiles[tileId];
+			assert(tile && tile->lightmapIndex != -1);
+			Gnd::Lightmap* lightmap = lightmaps[tile->lightmapIndex];
+
+			for (int i = 0; i < 8; i++)
+			{
+				lightmap->data[i + 8 * 0] = getLightmapBrightness(x, y - 1, i, 6);
+				lightmap->data[i + 8 * 7] = getLightmapBrightness(x, y + 1, i, 1);
+				lightmap->data[0 + 8 * i] = getLightmapBrightness(x - 1, y, 6, i);
+				lightmap->data[7 + 8 * i] = getLightmapBrightness(x + 1, y, 1, i);
+			}
+		}
+	}
+
+
+}
+
+int Gnd::getLightmapBrightness(int x, int y, int lightmapX, int lightmapY)
+{
+	if (x < 0 || y < 0 || x >= width || y >= height)
+		return 0;
+
+	Gnd::Cube* cube = cubes[x][y];
+	int tileId = cube->tileUp;
+	if (tileId == -1)
+		return 0;
+	Gnd::Tile* tile = tiles[tileId];
+	assert(tile && tile->lightmapIndex != -1);
+	Gnd::Lightmap* lightmap = lightmaps[tile->lightmapIndex];
+
+	return lightmap->data[lightmapX + 8 * lightmapY];
+
+}
+
+void Gnd::makeLightmapsSmooth()
+{
+	Log::out << "Smoothing..." << Log::newline;
+	for (int x = 0; x < width; x++)
+	{
+		for (int y = 0; y < height; y++)
+		{
+			Gnd::Cube* cube = cubes[x][y];
+			int tileId = cube->tileUp;
+			if (tileId == -1)
+				continue;
+			Gnd::Tile* tile = tiles[tileId];
+			assert(tile && tile->lightmapIndex != -1);
+			Gnd::Lightmap* lightmap = lightmaps[tile->lightmapIndex];
+
+			char newData[64];
+
+			for (int xx = 1; xx < 7; xx++)
+			{
+				for (int yy = 1; yy < 7; yy++)
+				{
+					int total = 0;
+					for (int xxx = xx - 1; xxx <= xx + 1; xxx++)
+						for (int yyy = yy - 1; yyy <= yy + 1; yyy++)
+							total += lightmap->data[xxx + 8 * yyy];
+					newData[xx + 8 * yy] = total / 9;
+				}
+			}
+			memcpy(lightmap->data, newData, 64 * sizeof(char));
+		}
+	}
+
 }

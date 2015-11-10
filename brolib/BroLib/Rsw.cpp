@@ -15,7 +15,7 @@ using blib::util::Log;
 
 using blib::util::Log;
 
-Rsw::Rsw()
+Rsw::Rsw(int width, int height)
 {
 	version = 0x0201;
 	water.height = 1;
@@ -36,6 +36,37 @@ Rsw::Rsw()
 	unknown[1] = 34004;
 	unknown[2] = 512;
 	unknown[3] = 0;
+
+
+	std::vector<glm::vec3> data;
+	std::function<void(int, float, float, float, float)> fill;
+	fill = [&data, &fill](int level, float width, float height, float centerx, float centery)
+	{
+		glm::vec3 bbmin(centerx - width * 5, 0, centerx - height * 5);
+		glm::vec3 bbmax(centerx + width * 5, 0, centerx + height * 5);
+		glm::vec3 range((bbmax - bbmin) / 2.0f);
+		data.push_back(bbmin);
+		data.push_back(bbmax);
+		data.push_back(range);
+		data.push_back(bbmax - range);
+
+		if (level < 5)
+		{
+			fill(level + 1, width / 2, height / 2, centerx - width*2.5f, centery - height*2.5f);
+			fill(level + 1, width / 2, height / 2, centerx - width*2.5f, centery + height*2.5f);
+			fill(level + 1, width / 2, height / 2, centerx + width*2.5f, centery + height*2.5f);
+			fill(level + 1, width / 2, height / 2, centerx + width*2.5f, centery - height*2.5f);
+		}
+	};
+	
+	fill(0, (float)width, (float)height, 0.0f, 0.0f);
+
+
+
+	quadtree = new QuadTreeNode(data.cbegin());
+
+
+
 }
 
 Rsw::Rsw(const std::string &fileName, bool loadModels)
@@ -45,7 +76,7 @@ Rsw::Rsw(const std::string &fileName, bool loadModels)
 	file->read(header, 4);
 	if(header[0] == 'G' && header[1] == 'R' && header[2] == 'G' && header[3] == 'W')
 	{
-		Log::out<<"Error loading rsw: invalid header"<<Log::newline;
+		Log::out<<"RSW: Error loading rsw: invalid header"<<Log::newline;
 		delete file;
 		return;
 	}
@@ -145,8 +176,8 @@ Rsw::Rsw(const std::string &fileName, bool loadModels)
 			{
 				Light* light = new Light();
 				light->name = file->readString(40);
-				light->position = file->readVec3();
 				light->todo = file->readString(40);
+				light->position = file->readVec3();
 				light->color = file->readVec3();
 				light->todo2 = file->readFloat();
 
@@ -296,8 +327,8 @@ void Rsw::save(const std::string &fileName)
 			pFile->writeInt(2);
 			Light* light = (Light*)object;
 			pFile->writeString(light->name, 40);
-			pFile->writeVec3(light->position);
 			pFile->writeString(light->todo, 40);
+			pFile->writeVec3(light->position);
 			pFile->writeVec3(light->color);
 			pFile->writeFloat(light->todo2);
 		}
@@ -541,14 +572,15 @@ std::vector<glm::vec3> collisions_(Rsm::Mesh* mesh, const blib::math::Ray &ray, 
 
 		if (newRay.LineIntersectPolygon(verts, t))
 		{
-			ret.push_back(newRay.origin + t * newRay.dir);
+			ret.push_back(glm::vec3(matrix * mesh->renderer->matrix * glm::vec4(newRay.origin + t * newRay.dir, 1)));
 		}
 	}
 
 	for (size_t i = 0; i < mesh->children.size(); i++)
 	{
 		std::vector<glm::vec3> other = collisions_(mesh->children[i], ray, matrix);
-		ret.insert(ret.end(), other.begin(), other.end());
+		if (!other.empty())
+			ret.insert(ret.end(), other.begin(), other.end());
 	}
 	return ret;
 }
