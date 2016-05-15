@@ -38,6 +38,7 @@
 #include <blib/Shapes.h>
 #include <blib/util/Log.h>
 #include <blib/linq.h>
+#include <blib/util/stb_image.h>
 
 #include <direct.h>
 #include <glm/glm.hpp>
@@ -55,6 +56,10 @@ BrowEdit::BrowEdit(const blib::json::Value &config, v8::Isolate* isolate) : mous
 {
 	this->config = config;
 	this->isolate = isolate;
+	if(config.isMember("language"))
+		this->translation = blib::util::FileSystem::getJson("assets/languages/" + config["language"].asString() + ".json");
+	else
+		this->translation = blib::util::FileSystem::getJson("assets/languages/english.json");
 
 	appSetup.window.setWidth((float)config["resolution"][0u].asInt());
 	appSetup.window.setHeight((float)config["resolution"][1u].asInt());
@@ -74,7 +79,7 @@ BrowEdit::BrowEdit(const blib::json::Value &config, v8::Isolate* isolate) : mous
 	appSetup.icon = IDI_ICON1;
 
 	HINSTANCE hInst = GetModuleHandle(0);
-	HRSRC hRes = FindResource(NULL, MAKEINTRESOURCE(IDR_DATA1), "data");
+	HRSRC hRes = FindResource(NULL, MAKEINTRESOURCE(IDR_DATA1), "FILE");
 	HGLOBAL hMem = LoadResource(NULL, hRes);
 	DWORD size = SizeofResource(NULL, hRes);
 	char* resText = (char*)LockResource(hMem);
@@ -85,7 +90,7 @@ BrowEdit::BrowEdit(const blib::json::Value &config, v8::Isolate* isolate) : mous
 	free(text);
 	FreeResource(hMem);
 
-	hRes = FindResource(NULL, MAKEINTRESOURCE(IDR_DATA2), "data");
+	hRes = FindResource(NULL, MAKEINTRESOURCE(IDR_DATA2), "FILE");
 	hMem = LoadResource(NULL, hRes);
 	size = SizeofResource(NULL, hRes);
 	resText = (char*)LockResource(hMem);
@@ -172,7 +177,7 @@ void BrowEdit::init()
 	//TODO: make sure registerHandle is threadsafe!, make sure the background tasks are cleaned up
 
 	wm->setSkin("assets/skins/ro.json", resourceManager);
-	wm->setRadialMenu(rootMenu = wm->loadMenu("assets/menu.json"));
+	wm->setRadialMenu(rootMenu = wm->loadMenu("assets/menu.json", translation["menu"]));
 	wm->setMenuBar(rootMenu);
 	addMouseListener(wm);
 	addKeyListener(wm);
@@ -285,7 +290,7 @@ void BrowEdit::init()
 	});
 
 
-	rootMenu->setAction("Actions/Calculate Lightmaps", [this]()
+	rootMenu->setAction("Actions/Lightmaps/Calculate Lightmaps", [this]()
 	{
 		if (!map)
 			return;
@@ -341,7 +346,7 @@ void BrowEdit::init()
 	});
 
 
-	rootMenu->setAction("Actions/Smooth Lightmaps", [this]()
+	rootMenu->setAction("Actions/Lightmaps/Smooth Lightmaps", [this]()
 	{
 		if (!map)
 			return;
@@ -352,13 +357,16 @@ void BrowEdit::init()
 		mapRenderer.setAllDirty();
 	});
 
-	rootMenu->setAction("Actions/Unique Lightmaps", [this]()
+	rootMenu->setAction("Actions/Lightmaps/Unique Lightmaps", [this]()
 	{
 		if (!map)
 			return;
 		map->getGnd()->makeLightmapsUnique();
 		mapRenderer.setAllDirty();
 	});
+
+
+
 
 
 	rootMenu->setAction("window/Help", [this]() { new HelpWindow(resourceManager, this);  });
@@ -375,6 +383,7 @@ void BrowEdit::init()
 	rootMenu->setAction("editmode/walledit", std::bind(&BrowEdit::setEditMode, this, EditMode::WallEdit));
 	rootMenu->setAction("editmode/gatedit", std::bind(&BrowEdit::setEditMode, this, EditMode::GatEdit));
 	rootMenu->setAction("editmode/detail gatedit", std::bind(&BrowEdit::setEditMode, this, EditMode::DetailGatEdit));
+	rootMenu->setAction("editmode/gattype", std::bind(&BrowEdit::setEditMode, this, EditMode::GatTypeEdit));
 	rootMenu->setAction("editmode/Lightmap edit", std::bind(&BrowEdit::setEditMode, this, EditMode::LightmapEdit));
 	rootMenu->setAction("editmode/Color Edit", std::bind(&BrowEdit::setEditMode, this, EditMode::ColorEdit));
 
@@ -386,6 +395,41 @@ void BrowEdit::init()
 
 
 	setEditMode(EditMode::TextureEdit);
+
+
+	{
+		std::vector<std::string> brushFiles = blib::util::FileSystem::getFileList("assets/textures/brushes");
+		for (const auto &b : brushFiles)
+		{
+			if (b[0] == '.')
+				continue;
+
+			char* fileData;
+			int length = blib::util::FileSystem::getData("assets/textures/brushes/" + b, fileData);
+			if (fileData)
+			{
+				int w, h, d;
+				unsigned char* tmpData = stbi_load_from_memory((stbi_uc*)fileData, length, &w, &h, &d, 3);
+				if (tmpData)
+				{
+					ShadowBrush brush;
+					brush.filename = b;
+					for (int y = 0; y < h; y++)
+					{
+						std::vector<glm::vec3> row;
+						for (int x = 0; x < w; x++)
+							row.push_back(glm::vec3(tmpData[(w*y + x) * 3 + 0], tmpData[(w*y + x) * 3 + 1], tmpData[(w*y + x) * 3 + 2]) / 255.0f);
+						brush.brush.push_back(row);
+					}
+					shadowMapBrushes.push_back(brush);
+				}
+				stbi_image_free(tmpData);
+				delete[] fileData;
+			}
+		}
+	}
+
+
 
 //	loadMap("data/c_tower1");
 #ifdef WIN32
@@ -416,7 +460,7 @@ void BrowEdit::update( double elapsedTime )
 	mapRenderer.orthoDistance = camera->ortho ? camera->distance : 0;
 	mapRenderer.drawTextureGrid = dynamic_cast<blib::wm::ToggleMenuItem*>(rootMenu->getItem("display/grid"))->getValue() && editMode == EditMode::TextureEdit; // TODO: fix this
 	mapRenderer.drawObjectGrid = dynamic_cast<blib::wm::ToggleMenuItem*>(rootMenu->getItem("display/grid"))->getValue() && (editMode == EditMode::ObjectEdit || editMode == EditMode::HeightEdit || editMode == EditMode::DetailHeightEdit || editMode == EditMode::WallEdit); // TODO: fix this
-	mapRenderer.drawGat = editMode == EditMode::GatEdit || editMode == EditMode::DetailGatEdit;
+	mapRenderer.drawGat = editMode == EditMode::GatEdit || editMode == EditMode::DetailGatEdit || editMode == EditMode::GatTypeEdit;
 
 	if (mouseState.leftButton)
 		mouseRay = mapRenderer.mouseRay;
@@ -524,6 +568,8 @@ void BrowEdit::update( double elapsedTime )
 			gatEditUpdate();
 		else if (editMode == EditMode::DetailGatEdit)
 			detailGatEditUpdate();
+		else if (editMode == EditMode::GatTypeEdit)
+			gatTypeEditUpdate();
 		else if (editMode == EditMode::LightmapEdit)
 			lightmapEditUpdate();
 	}
@@ -1254,8 +1300,12 @@ void BrowEdit::draw()
 			editModeString = "Height Edit";
 		else if (editMode == EditMode::DetailHeightEdit)
 			editModeString = "Detailed Height Edit";
+		else if (editMode == EditMode::GatTypeEdit)
+			editModeString = "GAT type editing: " + std::to_string(activeGatTile);
 		else if (editMode == EditMode::WallEdit)
 			editModeString = "Wall Edit";
+		else if (editMode == EditMode::LightmapEdit)
+			editModeString = "Lightmap editor, brightness " + std::to_string(shadowMapColor) + ", brush: " + shadowMapBrushes[shadowMapBrush].filename;
 		else
 			editModeString = "Unknown editmode: " + blib::util::toString((int)editMode);
 
@@ -1395,40 +1445,65 @@ void JsRunner::run()
 	f->Call(o, 0, args);
 }
 
+void BrowEdit::setLightmap(float x, float y, int color, float blend)
+{
+	int cursorX = (int)glm::floor(x / 10);
+	int cursorY = map->getGnd()->height - (int)glm::floor(y / 10);
+	if (cursorX >= 0 && cursorX < map->getGnd()->width && cursorY >= 0 && cursorY < map->getGnd()->height)
+	{
+		Gnd::Cube* cube = map->getGnd()->cubes[cursorX][cursorY];
+		assert(cube);
+		if (cube->tileUp >= 0)
+		{
+			Gnd::Tile* tile = map->getGnd()->tiles[cube->tileUp]; // TODO: determine which one to get, the floor or the walls
+			Gnd::Lightmap* lightmap = map->getGnd()->lightmaps[tile->lightmapIndex];
+			assert(lightmap);
+
+			float cursorXOff = -(cursorX - (x / 10));
+			float cursorYOff = cursorY - (map->getGnd()->height - (y / 10));
+			if (cursorXOff >= 0 && cursorXOff <= 1 && cursorYOff >= 0 && cursorYOff <= 1)
+			{
+				int px = (int)(cursorXOff * 6) + 1;
+				int py = (int)((1 - cursorYOff) * 6) + 1;
+
+				int oldVal = lightmap->data[px + 8 * py];
+				lightmap->data[px + 8 * py] = (int)(blend * (mouseState.leftButton ? color : 255) + (1- blend) * lightmap->data[px + 8 * py]);
+				if (lightmap->data[px + 8 * py] != oldVal)
+					mapRenderer.setShadowDirty();
+			}
+
+		}
+
+	}
+}
 
 
 void BrowEdit::lightmapEditUpdate()
 {
+	if (keyState.isPressed(blib::Key::BRACKETLEFT) && !lastKeyState.isPressed(blib::Key::BRACKETLEFT))
+		shadowMapColor -= 16;
+	if (keyState.isPressed(blib::Key::BRACKETRIGHT) && !lastKeyState.isPressed(blib::Key::BRACKETRIGHT))
+		shadowMapColor += 16;
+	shadowMapColor = glm::clamp(shadowMapColor, 0, 256);
+	
+	if (keyState.isPressed(blib::Key::RIGHT) && !lastKeyState.isPressed(blib::Key::RIGHT))
+		shadowMapBrush = (shadowMapBrush+1)%shadowMapBrushes.size();
+	if (keyState.isPressed(blib::Key::LEFT) && !lastKeyState.isPressed(blib::Key::LEFT))
+		shadowMapBrush = (shadowMapBrush + (int)shadowMapBrushes.size() - 1) % shadowMapBrushes.size();
+	
 	if (mouseState.leftButton || lastMouseState.rightButton)
 	{
-		int cursorX = (int)glm::floor(mapRenderer.mouse3d.x / 10);
-		int cursorY = map->getGnd()->height - (int)glm::floor(mapRenderer.mouse3d.z / 10);
-		if (cursorX >= 0 && cursorX < map->getGnd()->width && cursorY >= 0 && cursorY < map->getGnd()->height)
+		if (mouseState.position != lastMouseState.position || (mouseState.leftButton && !lastMouseState.leftButton) || (mouseState.rightButton && !lastMouseState.rightButton))
 		{
-			Gnd::Cube* cube = map->getGnd()->cubes[cursorX][cursorY];
-			assert(cube);
-			if (cube->tileUp >= 0)
-			{
-				Gnd::Tile* tile = map->getGnd()->tiles[cube->tileUp]; // TODO: determine which one to get, the floor or the walls
-				Gnd::Lightmap* lightmap = map->getGnd()->lightmaps[tile->lightmapIndex];
-				assert(lightmap);
-				
-				float cursorXOff = -(cursorX - (mapRenderer.mouse3d.x / 10));
-				float cursorYOff = cursorY - (map->getGnd()->height - (mapRenderer.mouse3d.z / 10));
-				if (cursorXOff >= 0 && cursorXOff <= 1 && cursorYOff >= 0 && cursorYOff <= 1)
-				{
-					int px = (int)(cursorXOff * 6) + 1;
-					int py = (int)((1-cursorYOff) * 6) + 1;
-					
-					int oldVal = lightmap->data[px + 8 * py];
-					lightmap->data[px + 8 * py] = mouseState.leftButton ? 127 : 255;
-					if (lightmap->data[px + 8 * py] != oldVal)
-						mapRenderer.setShadowDirty();
-				}
-
-			}
-			
+			ShadowBrush& brush = shadowMapBrushes[shadowMapBrush];
+			int h = brush.brush.size();
+			int w = brush.brush[0].size();
+			for (int y = 0; y < h; y++)
+				for (int x = 0; x < w; x++)
+					setLightmap(mapRenderer.mouse3d.x + x * 1 / 6.0f, mapRenderer.mouse3d.z + y * 1 / 6.0f, shadowMapColor, brush.brush[y][x].x);
 		}
+
+		
 
 
 	}

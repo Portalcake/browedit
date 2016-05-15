@@ -52,6 +52,7 @@ class BrowEdit : public blib::App, public blib::MouseListener
 		DetailHeightEdit,
 		GatEdit,
 		DetailGatEdit,
+		GatTypeEdit,
 		LightmapEdit,
 		ColorEdit,
 	};
@@ -59,6 +60,7 @@ class BrowEdit : public blib::App, public blib::MouseListener
 	EditMode editMode;
 
 	blib::json::Value config;
+	blib::json::Value translation;
 
 	blib::MouseState lastMouseState;
 	blib::MouseState startMouseState;
@@ -134,8 +136,18 @@ public:
 
 	std::vector<glm::ivec2> selectLasso;
 
-
+	int activeGatTile = 0;
 	int newTextureSize = 4;
+
+	class ShadowBrush
+	{
+	public:
+		std::vector<std::vector<glm::vec3>> brush;
+		std::string filename;
+	};
+	std::vector<ShadowBrush> shadowMapBrushes;
+	int shadowMapBrush = 0;
+	int shadowMapColor = 0;
 
 
 
@@ -166,7 +178,9 @@ public:
 	void wallEditUpdate();
 	void gatEditUpdate();
 	void detailGatEditUpdate();
+	void gatTypeEditUpdate();
 
+	void setLightmap(float x, float y, int color, float blend);
 
 	Rsw::Model* newModel;
 
