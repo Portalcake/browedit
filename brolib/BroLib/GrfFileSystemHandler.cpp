@@ -32,6 +32,7 @@ GrfFileSystemHandler::GrfFileSystemHandler( const std::string &grfFile ) : blib:
 	Log::out<<"Loaded GRF file "<<grfFile<<Log::newline;
 	for(unsigned int i = 0; i < grf->nfiles; i++)
 		lookup[sanitizeFileName(grf->files[i].name)] = i;
+	Log::out << lookup.size() << " files loaded"<< Log::newline;
 }
 
 GrfFileSystemHandler::~GrfFileSystemHandler()
@@ -63,6 +64,15 @@ void GrfFileSystemHandler::getFileList( const std::string &path, std::vector<std
 	for (std::map<std::string, int>::iterator it = lookup.begin(); it != lookup.end(); it++)
 	{
 		if (it->first.substr(0, directory.length()) == directory && it->first.find("\\", directory.size() + 1) == -1)
+			files.push_back(it->first);
+	}
+}
+
+void GrfFileSystemHandler::getFileList(const std::function<bool(const std::string&)> &filter, std::vector<std::string> &files)
+{
+	for (std::map<std::string, int>::iterator it = lookup.begin(); it != lookup.end(); it++)
+	{
+		if (filter(it->first))
 			files.push_back(it->first);
 	}
 }

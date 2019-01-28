@@ -14,8 +14,9 @@ using blib::util::Log;
 #include <glm/gtx/quaternion.hpp>
 
 
-Rsm::Rsm(std::string fileName)
+Rsm::Rsm(const std::string &fileName)
 {
+	this->fileName = fileName;
 	rootMesh = NULL;
 	renderer = NULL;
 	loaded = false;
@@ -23,6 +24,7 @@ Rsm::Rsm(std::string fileName)
 	if(!rsmFile || !rsmFile->opened())
 	{
 		Log::out<<"Unable to open "<<fileName<<Log::newline;
+		delete rsmFile;
 		return;
 	}
 
@@ -32,6 +34,7 @@ Rsm::Rsm(std::string fileName)
 	if(header[0] == 'G' && header[1] == 'R' && header[2] == 'G' && header[3] == 'M')
 	{
 		Log::out<<"Unknown RSM header in file "<<fileName<<", stopped loading"<<Log::newline;
+		delete rsmFile;
 		return;
 	}
 
@@ -43,9 +46,16 @@ Rsm::Rsm(std::string fileName)
 	else
 		alpha = 0;
 	rsmFile->read(unknown, 16);
-
+	for(int i = 0; i < 16; i++)
+		assert(unknown[i] == 0);
 
 	int textureCount = rsmFile->readInt();
+	if (textureCount > 100)
+	{
+		Log::out << "Invalid textureCount, aborting" << Log::newline;
+		delete rsmFile;
+		return;
+	}
 
 	for(int i = 0; i < textureCount; i++)
 	{
@@ -74,7 +84,72 @@ Rsm::Rsm(std::string fileName)
 	rootMesh->fetchChildren(meshes);
 
 
+	updateMatrices();
 
+
+	int numKeyFrames = rsmFile->readInt();
+	assert(numKeyFrames == 0);
+
+	int numVolumeBox = rsmFile->readInt();
+	if (numVolumeBox != 0)
+		Log::out << "WARNING! This model has " << numVolumeBox<<" volume boxes!" << Log::newline;
+
+	loaded = true;
+	delete rsmFile;
+}
+
+
+Rsm::~Rsm()
+{
+	if (renderer)
+		delete renderer;
+	if (rootMesh)
+		delete rootMesh;
+}
+
+
+void Rsm::save(const std::string &fileName) const
+{
+	blib::util::StreamOut* pFile = pFile = blib::util::FileSystem::openWrite(fileName);
+	if (!pFile)
+	{
+		Log::out << "Error saving to " << fileName << Log::newline;
+		Log::out << "Please create a directory to store it"<< Log::newline;
+		return;
+	}
+	pFile->write("GRSM", 4);
+
+	pFile->writeShort(version);
+	pFile->writeInt(animLen);
+	pFile->writeInt((int)shadeType);
+	if (version >= 0x0104)
+		pFile->write((char*)&alpha, 1);
+
+	pFile->write((char*)unknown, 16);
+
+	pFile->writeInt(textures.size());
+
+	for (std::size_t i = 0; i < textures.size(); i++)
+		pFile->writeString(textures[i], 40);
+
+	pFile->writeString(rootMesh->name, 40);
+
+	int meshCount = 0;
+	rootMesh->foreach([&meshCount](Rsm::Mesh* mesh) { meshCount++; });
+	pFile->writeInt(meshCount);
+
+	rootMesh->foreach([pFile](Mesh* mesh) { mesh->save(pFile); });
+
+	pFile->writeInt(0); // translation keyframes
+	pFile->writeInt(0); // volume box?
+
+
+	delete pFile;
+
+}
+
+void Rsm::updateMatrices()
+{
 	bbmin = glm::vec3(999999, 999999, 999999);
 	bbmax = glm::vec3(-999999, -999999, -9999999);
 	rootMesh->setBoundingBox(bbmin, bbmax);
@@ -88,23 +163,11 @@ Rsm::Rsm(std::string fileName)
 
 	realbbmax = glm::vec3(-999999, -999999, -999999);
 	realbbmin = glm::vec3(999999, 999999, 999999);
-	glm::mat4 mat = glm::scale(glm::mat4(), glm::vec3(1,-1,1));
+	glm::mat4 mat = glm::scale(glm::mat4(), glm::vec3(1, -1, 1));
 	rootMesh->setBoundingBox2(mat, realbbmin, realbbmax);
 	realbbrange = (realbbmax + realbbmin) / 2.0f;
 	maxRange = glm::max(glm::max(realbbmax.x, -realbbmin.x), glm::max(glm::max(realbbmax.y, -realbbmin.y), glm::max(realbbmax.z, -realbbmin.z)));
 
-
-	loaded = true;
-	delete rsmFile;
-}
-
-
-Rsm::~Rsm()
-{
-	if (renderer)
-		delete renderer;
-	if (rootMesh)
-		delete rootMesh;
 }
 
 
@@ -129,10 +192,12 @@ void Rsm::Mesh::calcMatrix1()
 	}
 	else
 	{
-		if(true)
+		if(frames[frames.size() - 1]->time != 0)
 		{
-			int tick = (int)(blib::util::Profiler::getAppTime() * 1000) % frames[frames.size() - 1]->time;
-
+			int tick = 0;
+			if(model->renderer)
+				tick = model->renderer->timer.millis() % frames[frames.size() - 1]->time;
+			//Log::out << "Tick: " << tick << Log::newline;
 			int current = 0;
 			for(unsigned int i = 0; i < frames.size(); i++)
 			{
@@ -313,8 +378,12 @@ Rsm::Mesh::Mesh(Rsm* model, blib::util::StreamInFile* rsmFile)
 	texCoords.resize(texCoordCount);
 	for(int i = 0; i < texCoordCount; i++)
 	{
-		if(model->version >= 0x0102)
-			rsmFile->readFloat();
+		float todo = 0;
+		if (model->version >= 0x0102)
+		{
+			todo = rsmFile->readFloat();
+			assert(todo == 0);
+		}
 		texCoords[i] = rsmFile->readVec2();
 		//texCoords[i].y = 1-texCoords[i].y;
 	}
@@ -332,7 +401,9 @@ Rsm::Mesh::Mesh(Rsm* model, blib::util::StreamInFile* rsmFile)
 		f->texvertices[2] = rsmFile->readWord();
 
 		f->texIndex = rsmFile->readWord();
-		rsmFile->readWord();//TODO?
+		int padding = rsmFile->readWord(); //padding can be 0, -1, or other strange values?
+		
+
 		f->twoSide = rsmFile->readInt();
 		f->smoothGroup = rsmFile->readInt();
 
@@ -361,6 +432,32 @@ Rsm::Mesh::Mesh(Rsm* model, blib::util::StreamInFile* rsmFile)
 }
 
 
+Rsm::Mesh::Mesh(Rsm* model)
+{
+	renderer = NULL;
+	this->model = model;
+
+	offset[0][0] = 1;
+	offset[0][1] = 0;
+	offset[0][2] = 0;
+
+	offset[1][0] = 0;
+	offset[1][1] = 0;
+	offset[1][2] = 1;
+
+	offset[2][0] = 0;
+	offset[2][1] = -1;
+	offset[2][2] = 0;
+
+	pos_ = glm::vec3(0,0,0);
+	pos = glm::vec3(0,0,0);
+	rotangle = 0;
+	rotaxis = glm::vec3(0, 1, 0);
+	scale = glm::vec3(1, 1, 1);
+}
+
+
+
 Rsm::Mesh::~Mesh()
 {
 	if (renderer)
@@ -368,6 +465,74 @@ Rsm::Mesh::~Mesh()
 	blib::linq::deleteall(faces);
 	blib::linq::deleteall(frames);
 	blib::linq::deleteall(children);
+}
+
+void Rsm::Mesh::save(blib::util::StreamOut* pFile)
+{
+	pFile->writeString(name, 40);
+	pFile->writeString(parentName, 40);
+
+	pFile->writeInt(textures.size());
+	//TODO!
+	for (std::size_t i = 0; i < textures.size(); i++)
+		pFile->writeInt(textures[i]);
+
+	pFile->writeFloat(offset[0][0]);
+	pFile->writeFloat(offset[0][1]);
+	pFile->writeFloat(offset[0][2]);
+
+	pFile->writeFloat(offset[1][0]);
+	pFile->writeFloat(offset[1][1]);
+	pFile->writeFloat(offset[1][2]);
+
+	pFile->writeFloat(offset[2][0]);
+	pFile->writeFloat(offset[2][1]);
+	pFile->writeFloat(offset[2][2]);
+
+	pFile->writeVec3(pos_);
+	pFile->writeVec3(pos);
+	pFile->writeFloat(rotangle);
+	pFile->writeVec3(rotaxis);
+	pFile->writeVec3(scale);
+
+	pFile->writeInt(vertices.size());
+	for (std::size_t i = 0; i < vertices.size(); i++)
+		pFile->writeVec3(vertices[i]);
+
+	pFile->writeInt(texCoords.size());
+	for (std::size_t i = 0; i < texCoords.size(); i++)
+	{
+		if (model->version >= 0x0102)
+			pFile->writeFloat(0); //3d texture coordinate, always 0
+		pFile->writeVec2(texCoords[i]);
+	}
+
+	pFile->writeInt(faces.size());
+	for (std::size_t i = 0; i < faces.size(); i++)
+	{
+		Face* f = faces[i];
+		pFile->writeWord(f->vertices[0]);
+		pFile->writeWord(f->vertices[1]);
+		pFile->writeWord(f->vertices[2]);
+		pFile->writeWord(f->texvertices[0]);
+		pFile->writeWord(f->texvertices[1]);
+		pFile->writeWord(f->texvertices[2]);
+
+		pFile->writeWord(f->texIndex);
+		pFile->writeWord(0); //padding, always 0
+		pFile->writeInt(f->twoSide);
+		pFile->writeInt(f->smoothGroup);
+	}
+
+	pFile->writeInt(frames.size());
+	for (std::size_t i = 0; i < frames.size(); i++)
+	{
+		pFile->writeInt(frames[i]->time);
+		pFile->writeFloat(frames[i]->quaternion.x);
+		pFile->writeFloat(frames[i]->quaternion.y);
+		pFile->writeFloat(frames[i]->quaternion.z);
+		pFile->writeFloat(frames[i]->quaternion.w);
+	}
 }
 
 
@@ -436,3 +601,10 @@ void Rsm::draw(WorldShader* shader, glm::mat4 modelMatrix)
 }
 */
 
+
+void Rsm::Mesh::foreach(const std::function<void(Mesh*)> &callback)
+{
+	callback(this);
+	for (auto child : children)
+		child->foreach(callback);
+}

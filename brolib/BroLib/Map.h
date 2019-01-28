@@ -43,12 +43,15 @@ public:
 	bool inMap(int xx, int yy);
 	void saveHeightmap(const std::string &fileName);
 	void loadHeightmap(const std::string &fileName);
+	void exportLightmap(const std::string &fileName);
 	void exportObj(const std::string &fileName);
 
 	float heightImportMin;
 	float heightImportMax;
 	std::vector<std::vector<Gnd::Cube> > heightImportCubes;
 
+
+	std::vector<glm::vec3> getMapQuads();
 
 	glm::vec4 getHeightsAt(int x, int y);
 	float getHeightAt(float x, float y);

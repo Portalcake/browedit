@@ -8,11 +8,12 @@
 #include <vector>
 #include <string>
 #include <map>
+#include <functional>
 
 namespace blib
 {
 	class Texture;
-	namespace util { class StreamInFile; }
+	namespace util { class StreamInFile; class StreamOut; }
 }
 
 class RsmModelRenderInfo;
@@ -44,12 +45,14 @@ public:
 
 
 		Mesh(Rsm* model, blib::util::StreamInFile* rsmFile);
+		Mesh(Rsm* model);
 		~Mesh();
+
+		void save(blib::util::StreamOut* pFile);
+		void foreach(const std::function<void(Mesh*)> &callback);
 
 		std::string						name;
 		std::string						parentName;
-		int								unknown1;
-		float							unknown2;
 
 		glm::mat4						offset;
 		glm::vec3						pos_;
@@ -77,6 +80,7 @@ public:
 		glm::mat4 matrix2;
 		void calcMatrix1();
 		void calcMatrix2();
+		bool matrixDirty = true;
 
 		void setBoundingBox( glm::vec3& bbmin, glm::vec3& bbmax );
 		void setBoundingBox2( glm::mat4& mat, glm::vec3& realbbmin, glm::vec3& realbbmax );
@@ -84,8 +88,10 @@ public:
 	};
 
 public:
-	Rsm(std::string fileName);
+	Rsm(const std::string &fileName);
 	~Rsm();
+	void updateMatrices();
+	void save(const std::string &fileName) const;
 
 	bool loaded;
 

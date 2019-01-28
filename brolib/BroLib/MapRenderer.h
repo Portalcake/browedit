@@ -5,6 +5,7 @@
 #include <blib/gl/Vertex.h>
 #include <blib/gl/GlResizeRegister.h>
 #include <blib/math/Ray.h>
+#include <blib/util/Timer.h>
 #include <map>
 #include <vector>
 
@@ -36,7 +37,7 @@ public:
 class RsmMeshRenderInfo
 {
 public:
-	blib::VBO* vbo;
+	blib::VBO* vbo = nullptr;
 	std::vector<VboIndex> indices;
 	glm::mat4 matrix;
 	glm::mat4 matrixSub;
@@ -47,6 +48,7 @@ class RsmModelRenderInfo
 public:
 	~RsmModelRenderInfo();
 	std::vector<blib::Texture*> textures;
+	blib::util::Timer timer;
 };
 
 class MapRenderer : public blib::gl::GlResizeRegister
@@ -102,6 +104,7 @@ private:
 	bool gndTileColorDirty;
 #pragma endregion
 #pragma region RSW
+public:
 	blib::RenderState rswRenderState;
 	class RswShaderAttributes
 	{
@@ -199,6 +202,7 @@ public:
 	void setShadowDirty();
 	void setColorDirty() { gndTileColorDirty = true; }
 	void renderMeshFbo(Rsm* rsm, float rotation, blib::FBO* fbo, blib::Renderer* renderer);
+	void renderMesh(Rsm* rsm, const glm::mat4& matrix, blib::Renderer* renderer);
 	bool gndTextureGridDirty;
 	bool gndGridDirty;
 	bool gatDirty;
