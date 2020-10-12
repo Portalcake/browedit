@@ -22,6 +22,7 @@
 #include <blib/wm/Menu.h>
 
 #include <assimp/Importer.hpp>	//OO version Header!
+#include <assimp/Exporter.hpp>
 #include <assimp/postprocess.h>
 #include <assimp/scene.h>
 #include <assimp/DefaultLogger.hpp>
@@ -98,7 +99,7 @@ void BromEdit::init()
 	//	loadModel("data\\model\\인던02\\인던02b중앙장식01.rsm");
 		//loadModel("data\\model\\event\\3차전직_석상02.rsm"); //bigass statue
 		//loadModel("data\\model\\para\\alchemy_01.rsm");
-		loadModel("data\\model\\para\\mora_01.rsm");
+		//loadModel("data\\model\\para\\mora_01.rsm");
 		//loadModel("data\\model\\para\\mora_02.rsm");
 		//loadModel("data\\model\\masin\\fire_land.rsm");
 		//loadModel("data\\model인던02인던02미이라.rsm");
@@ -107,6 +108,8 @@ void BromEdit::init()
 		//loadModel("data\\model\\pud\\stall_03.rsm");
 		//loadModel("data\\model\\pud\\swing_01.rsm");
 		//loadModel("data\\model\\pud\\balloon_01.rsm");
+		//loadModel("data\\model\\plants_e_01.rsm2");
+		loadModel("data\\model\\ilusion\\boarding_j_01.rsm2");
 
 	grid = resourceManager->getResource<blib::Texture>("assets/textures/grid.png");
 	grid->setTextureRepeat(true);
@@ -166,8 +169,8 @@ void BromEdit::update(double elapsedTime)
 		if (mouseState.position.y > bary+40)
 		{
 			int index = (int)((mouseState.position.y - bary - 40) / 13);
-			std::function<void(Rsm::Mesh*)> selectMesh;
-			selectMesh = [&, this](Rsm::Mesh* mesh)
+			std::function<void(IRsm::IMesh*)> selectMesh;
+			selectMesh = [&, this](IRsm::IMesh* mesh)
 			{
 				if (index == 0)
 				{
@@ -180,11 +183,11 @@ void BromEdit::update(double elapsedTime)
 
 			};
 			selectMesh(model->rootMesh);
-
-			for (auto frame : selectedMesh->frames)
+#ifdef FIXME
+			for (auto frame : selectedRsmMesh->frames)
 				if (fabs(frame->time / 10.0 - timeSelect) < 5)
 					frameProperties->selectFrame(frame);
-
+#endif
 
 		}
 		if (mouseState.position.y > bary && mouseState.position.y < bary + 40)
@@ -209,7 +212,7 @@ void BromEdit::update(double elapsedTime)
 	if (mouseState.position.y > bary + 40 && mouseState.position.x > 100 && mouseState.leftButton)
 	{
 		timeSelect = mouseState.position.x - 100.0f;
-		for (auto frame : selectedMesh->frames)
+		for (auto frame : selectedRsmMesh->frames)
 			if (fabs(frame->time / 10.0 - timeSelect) < 5)
 				frameProperties->selectFrame(frame);
 		if (model->renderer->timer.isPaused())
@@ -233,7 +236,11 @@ void BromEdit::draw()
 	matrix = glm::rotate(matrix, rotation.y, glm::vec3(1, 0, 0));
 	matrix = glm::rotate(matrix, rotation.x, glm::vec3(0, 1, 0));
 	matrix = glm::rotate(matrix, glm::pi<float>(), glm::vec3(1, 0, 0));
-	matrix = glm::translate(matrix, glm::vec3(model->realbbrange));
+
+	if(model->version < 0x0200)
+		matrix = glm::translate(matrix, glm::vec3(model1->realbbrange));
+	else
+		matrix = glm::translate(matrix, glm::vec3(100));
 
 
 	renderer->setViewPort(0, 200, window->getWidth(), window->getHeight() - 200);
@@ -294,9 +301,9 @@ void BromEdit::draw()
 
 
 	int i = 0;
-	std::function<void(Rsm::Mesh*, int)> drawLine;
+	std::function<void(IRsm::IMesh*, int)> drawLine;
 
-	drawLine = [&,this](Rsm::Mesh* mesh, int level)
+	drawLine = [&,this](IRsm::IMesh* mesh, int level)
 	{
 		if (mesh == selectedMesh)
 		{
@@ -309,7 +316,7 @@ void BromEdit::draw()
 		else
 			spriteBatch->draw(font, mesh->name, blib::math::easyMatrix(glm::vec2(5 + 16 * level, y + 40 + i * 13)), glm::vec4(0, 0, 0, 1));
 
-
+#ifdef FIXME 
 		for (auto frame : mesh->frames)
 		{
 			std::string symbol = "o";
@@ -323,7 +330,7 @@ void BromEdit::draw()
 			int tick = model->renderer->timer.millis() % mesh->frames[mesh->frames.size() - 1]->time;
 			spriteBatch->draw(font, "|", blib::math::easyMatrix(glm::vec2(100 + tick / 10, y + 40 + i * 13)), glm::vec4(0, 0, 0, 1));
 		}
-
+#endif
 		i++;
 		for (auto &m : mesh->children)
 			drawLine(m, level + 1);
@@ -343,8 +350,15 @@ void BromEdit::draw()
 
 void BromEdit::loadModel(const std::string &fileName)
 {
-	model = new Rsm(fileName);
-	distance = glm::min(100.0f, glm::max(glm::max(model->realbbmax.x - model->realbbmin.x, model->realbbmax.y - model->realbbmin.y), model->realbbmax.z - model->realbbmin.z));
+	if (fileName.substr(fileName.size() - 4) == ".rsm")
+	{
+		model = new Rsm(fileName);
+		distance = glm::min(100.0f, glm::max(glm::max(model1->realbbmax.x - model1->realbbmin.x, model1->realbbmax.y - model1->realbbmin.y), model1->realbbmax.z - model1->realbbmin.z));
+	}
+	else if (fileName.substr(fileName.size() - 5) == ".rsm2")
+	{
+		model = new Rsm2(fileName);
+	}
 	mouseState.scrollPosition = 0;
 
 	renderInfo = new RsmModelRenderInfo();
@@ -374,7 +388,7 @@ void BromEdit::addKeyframe()
 	frame->time = (int)(timeSelect * 10);
 
 	frameProperties->selectFrame(frame);
-
+#ifdef FIXME
 	for (auto it = selectedMesh->frames.begin(); it != selectedMesh->frames.end(); it++)
 	{
 		if ((*it)->time / 10 > timeSelect) {
@@ -398,12 +412,13 @@ void BromEdit::addKeyframe()
 			return b->time > a->time;
 		});
 	}
-
+#endif
 
 }
 
 void BromEdit::delKeyframe()
 {
+#ifdef FIXME
 	for (auto it = selectedMesh->frames.begin(); it != selectedMesh->frames.end(); it++)
 	{
 		if (fabs((*it)->time / 10.0 - timeSelect) < 5)
@@ -434,11 +449,12 @@ void BromEdit::delKeyframe()
 		delete selectedMesh->frames[0];
 		selectedMesh->frames.clear();
 	}
-
+#endif
 }
 
 void BromEdit::prevFrame()
 {
+#ifdef FIXME
 	for (std::size_t i = 0; i < selectedMesh->frames.size(); i++)
 	{
 		auto frame = selectedMesh->frames[i];
@@ -451,10 +467,12 @@ void BromEdit::prevFrame()
 			break;
 		}
 	}
+#endif
 }
 
 void BromEdit::nextFrame()
 {
+#ifdef FIXME
 	for (std::size_t i = 0; i < selectedMesh->frames.size(); i++)
 	{
 		auto frame = selectedMesh->frames[i];
@@ -467,11 +485,13 @@ void BromEdit::nextFrame()
 			break;
 		}
 	}
+#endif
 }
 
 
 void BromEdit::addMesh()
 {
+#ifdef FIXME
 	if (!selectedMesh)
 		return;
 
@@ -480,11 +500,24 @@ void BromEdit::addMesh()
 	mesh->parent = selectedMesh;
 	mesh->parentName = mesh->parent->name;
 	mesh->parent->children.push_back(mesh);
+#endif
 }
 
 void BromEdit::delMesh()
 {
+#ifdef FIXME
+	if (!selectedMesh)
+		return;
+	// don't delete rootnode
+	if (!selectedMesh->parent)
+		return; 
 
+	auto toDelete = selectedMesh;
+	selectedMesh = selectedMesh->parent;
+
+	selectedMesh->children.erase(std::remove(selectedMesh->children.begin(), selectedMesh->children.end(), toDelete), selectedMesh->children.end());
+	delete toDelete;
+#endif
 }
 
 void BromEdit::menuFileNew()
@@ -496,7 +529,7 @@ void BromEdit::menuFileNew()
 void BromEdit::menuFileSave()
 {
 	std::string fileName = model->fileName;
-	if (fileName.find(":") != std::string::npos && fileName.find("..") != std::string::npos)
+	if (fileName.find(":") != std::string::npos || fileName.find("..") != std::string::npos)
 		model->save(model->fileName);
 	else
 		model->save(blib::util::replace(config["data"]["ropath"].get<std::string>() + "/" + fileName, "/", "\\"));
@@ -507,7 +540,7 @@ void BromEdit::menuFileSave()
 void BromEdit::menuFileSaveAs()
 {
 	std::string fileNameStr = model->fileName;
-	if (!(fileNameStr.find(":") != std::string::npos && fileNameStr.find("..") != std::string::npos))
+	if (!(fileNameStr.find(":") != std::string::npos || fileNameStr.find("..") != std::string::npos))
 		fileNameStr = blib::util::replace(config["data"]["ropath"].get<std::string>() + "/" + fileNameStr, "/", "\\");
 
 	char fileName[1024];
@@ -522,7 +555,7 @@ void BromEdit::menuFileSaveAs()
 	ofn.hwndOwner = hWnd;
 	ofn.lpstrFile = fileName;
 	ofn.nMaxFile = 1024;
-	ofn.lpstrFilter = "All\0*.*\0RO maps\0*.rsw\0";
+	ofn.lpstrFilter = "All\0*.*\0RO models\0*.rsm\0";
 	ofn.nFilterIndex = 2;
 	ofn.lpstrFileTitle = NULL;
 	ofn.nMaxFileTitle = 0;
@@ -545,15 +578,44 @@ void BromEdit::menuFileSaveAs()
 
 void BromEdit::replaceMesh()
 {
-	std::string filename = "D:\\CloudStation\\Collection\\Models\\env\\_Stylized\\mini-house\\house.fbx";
+	char pFileName[1024];
+	strcpy_s(pFileName, 1024, "D:\\CloudStation\\Collection\\Models\\env\\_Stylized\\mini-house\\house.fbx");
+
+	char curdir[256];
+	_getcwd(curdir, 256);
+	HWND hWnd = this->window->hWnd;
+	OPENFILENAME ofn;
+	ZeroMemory(&ofn, sizeof(ofn));
+	ofn.lStructSize = sizeof(ofn);
+	ofn.hwndOwner = hWnd;
+	ofn.lpstrFile = pFileName;
+	ofn.nMaxFile = 1024;
+	ofn.lpstrFilter = "All\0*.*\0Models\0*.fbx;*.obj;*.3ds;*.lwo;*.stl|\0";
+	ofn.nFilterIndex = 2;
+	ofn.lpstrFileTitle = NULL;
+	ofn.nMaxFileTitle = 0;
+	ofn.lpstrInitialDir = NULL;
+	ofn.Flags = OFN_PATHMUSTEXIST | OFN_ENABLESIZING | OFN_OVERWRITEPROMPT;
+	if (!GetOpenFileName(&ofn))
+	{
+		_chdir(curdir);
+		return;
+	}
+
+	std::string filename = pFileName;
+	filename = blib::util::replace(filename, "\\", "/");
+	_chdir(curdir);
+
 	auto mesh = selectedMesh ? selectedMesh : model->rootMesh;
 	Assimp::Importer importer;
 
 	mesh->faces.clear();
 	mesh->vertices.clear();
 	mesh->texCoords.clear();
+#ifdef FIXME
 	mesh->textures.clear();
 	mesh->textures.push_back(0); //todo
+#endif
 	delete mesh->renderer;
 	mesh->renderer = nullptr;
 
@@ -587,15 +649,15 @@ void BromEdit::replaceMesh()
 				Rsm::Mesh::Face* face = new Rsm::Mesh::Face();
 				const auto &f = m->mFaces[ii];
 
-				face->twoSide = false;
-				face->texIndex = 0;
+				face->twoSided = false;
+				face->texId = 0;
 				face->smoothGroup = 0;
 
 				assert(f.mNumIndices == 3);
 				for (int iii = 0; iii < f.mNumIndices; iii++)
 				{
-					face->vertices[iii] = f.mIndices[iii];
-					face->texvertices[iii] = f.mIndices[iii];
+					face->vertexIds[iii] = f.mIndices[iii];
+					face->texCoordIds[iii] = f.mIndices[iii];
 				}
 
 				mesh->faces.push_back(face);
@@ -603,7 +665,7 @@ void BromEdit::replaceMesh()
 
 		}
 
-		for (int i  = 0; i < node->mNumChildren; i++)
+		for (unsigned int i  = 0; i < node->mNumChildren; i++)
 			scanMesh(scene, node->mChildren[i], matrix);
 	};
 
@@ -634,27 +696,98 @@ void BromEdit::exportMesh()
 	ofn.hwndOwner = hWnd;
 	ofn.lpstrFile = fileName;
 	ofn.nMaxFile = 1024;
-	ofn.lpstrFilter = "All\0*.*\0RO maps\0*.rsw\0";
+	ofn.lpstrFilter = "All\0*.*\0Object files\0*.obj\0";
 	ofn.nFilterIndex = 2;
 	ofn.lpstrFileTitle = NULL;
 	ofn.nMaxFileTitle = 0;
 	ofn.lpstrInitialDir = NULL;
 	ofn.Flags = OFN_PATHMUSTEXIST | OFN_ENABLESIZING | OFN_OVERWRITEPROMPT;
-	if (GetSaveFileName(&ofn))
+	if (!GetSaveFileName(&ofn))
 	{
-		std::string newFileName(fileName);
-		newFileName = blib::util::replace(newFileName, "/", "\\");
 		_chdir(curdir);
-
-		//->save(newFileName);
+		return;
 	}
+	std::string newFileName(fileName);
+	newFileName = blib::util::replace(newFileName, "/", "\\");
 	_chdir(curdir);
+
+
+
+	aiScene scene;
+	scene.mRootNode = new aiNode();
+	scene.mMaterials = new aiMaterial * [1];
+	scene.mNumMaterials = 1;
+
+	scene.mMaterials[0] = new aiMaterial();
+
+	scene.mMeshes = new aiMesh * [1];
+	scene.mMeshes[0] = nullptr;
+	scene.mNumMeshes = 1;
+
+	auto mesh = scene.mMeshes[0] = new aiMesh();
+	scene.mMeshes[0]->mMaterialIndex = 0;
+
+	scene.mRootNode->mMeshes = new unsigned int[1];
+	scene.mRootNode->mMeshes[0] = 0;
+	scene.mRootNode->mNumMeshes = 1;
+
+	
+
+	std::vector<std::pair<glm::vec3, glm::vec2>> vertices;
+	std::map<std::pair<int, int>, int> lookup;
+
+
+	for (auto f : selectedMesh->faces)
+	{
+		for(int i = 0; i < 3; i++)
+		{
+			auto indices = std::pair<int, int>(f->vertexIds[i], f->texCoordIds[i]);
+			if (lookup.find(indices) == lookup.end())
+			{
+				lookup[indices] = vertices.size();
+				vertices.push_back(std::pair<glm::vec3, glm::vec2>(selectedMesh->vertices[indices.first], selectedMesh->texCoords[indices.second]));
+			}
+		}
+	}
+
+	mesh->mVertices = new aiVector3D[vertices.size()];
+	mesh->mNumVertices = vertices.size();
+
+	mesh->mTextureCoords[0] = new aiVector3D[vertices.size()];
+	mesh->mNumUVComponents[0] = vertices.size();
+
+	for (std::size_t i = 0; i < vertices.size(); i++)
+	{
+		mesh->mVertices[i] = aiVector3D(vertices[i].first.x, vertices[i].first.y, vertices[i].first.z);
+		mesh->mTextureCoords[0][i] = aiVector3D(vertices[i].second.x, 1-vertices[i].second.y, 0);
+	}
+
+	mesh->mNumFaces = selectedMesh->faces.size();
+	mesh->mFaces = new aiFace[selectedMesh->faces.size()];
+
+	for (std::size_t i = 0; i < selectedMesh->faces.size(); i++)
+	{
+		auto f = selectedMesh->faces[i];
+		aiFace& face = mesh->mFaces[i];
+		face.mIndices = new unsigned int[3];
+		face.mNumIndices = 3;
+
+		for (int ii = 0; ii < 3; ii++)
+		{
+			auto indices = std::pair<int, int>(f->vertexIds[ii], f->texCoordIds[ii]);
+			face.mIndices[ii] = lookup[indices];
+		}
+	}
+
+	Assimp::Exporter exporter;
+	exporter.Export(&scene, "obj", newFileName, aiProcess_Triangulate);
 
 }
 
 
 void BromEdit::testStuff()
 {
+#ifdef FIXME
 	{
 		auto files = blib::util::FileSystem::getFileList([](const std::string &fileName)
 		{
@@ -668,8 +801,9 @@ void BromEdit::testStuff()
 		for (const auto &f : files)
 		{
 			Log::out << "Loading " << f << Log::newline;
-			Rsm* rsm = new Rsm(f);
+			IRsm* rsm = new IRsm(f);
 			delete rsm;
 		}
 	}
+#endif
 }

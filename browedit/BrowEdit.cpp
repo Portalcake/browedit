@@ -54,7 +54,7 @@ using blib::util::Log;
 #endif
 
 
-BrowEdit::BrowEdit(const json &config, v8::Isolate* isolate) : mouseRay(glm::vec3(0,0,0), glm::vec3(1,0,0))
+BrowEdit::BrowEdit(const json &config, v8::Isolate* isolate)
 {
 	this->config = config;
 	this->isolate = isolate;
@@ -170,12 +170,12 @@ BrowEdit::~BrowEdit(void)
 void BrowEdit::init()
 {
 	std::list<blib::BackgroundTask<int>*> tasks;
+	blib::util::FileSystem::registerHandler(new blib::util::PhysicalFileSystemHandler(config["data"]["ropath"].get<std::string>()));
 	for (size_t i = 0; i < config["data"]["grfs"].size(); i++)
 		tasks.push_back(new blib::BackgroundTask<int>(NULL, [this, i]() { blib::util::FileSystem::registerHandler(new GrfFileSystemHandler(config["data"]["grfs"][i].get<std::string>())); return 0; }));
 	for (blib::BackgroundTask<int>* task : tasks)
 		task->waitForTermination();
 
-	blib::util::FileSystem::registerHandler(new blib::util::PhysicalFileSystemHandler( config["data"]["ropath"].get<std::string>() ));
 
 
 	gradientBackground = resourceManager->getResource<blib::Texture>("assets/textures/gradient.png");
@@ -185,7 +185,7 @@ void BrowEdit::init()
 	wm->setSkin("assets/skins/ro.json", resourceManager);
 	wm->setRadialMenu(rootMenu = wm->loadMenu("assets/menu.json", translation["menu"]));
 	wm->setMenuBar(rootMenu);
-	addMouseListener(wm);
+	addMouseListener(wm, true);
 	addKeyListener(wm);
 
 	addMouseListener(this);
@@ -249,15 +249,21 @@ void BrowEdit::init()
 	rootMenu->setAction("file/open", [this](){	new FileOpenWindow(resourceManager, this);	});
 	rootMenu->setAction("file/save",			std::bind(&BrowEdit::menuFileSave, this));
 	rootMenu->setAction("file/save as",			std::bind(&BrowEdit::menuFileSaveAs, this));
-	rootMenu->setAction("file/save heightmap",	std::bind(&BrowEdit::menuFileSaveHeightmap, this));
-	rootMenu->setAction("file/load heightmap",	std::bind(&BrowEdit::menuFileLoadHeightmap, this));
-	rootMenu->setAction("file/export lightmap", std::bind(&BrowEdit::menuFileExportLightmap, this));	
-	rootMenu->setAction("file/export obj",		std::bind(&BrowEdit::menuFileExportObj, this));
+	rootMenu->setAction("file/import-export/export lightmap",	std::bind(&BrowEdit::menuFileExportLightmap, this));
+	rootMenu->setAction("file/import-export/export colors",		std::bind(&BrowEdit::menuFileExportColors, this));
+	rootMenu->setAction("file/import-export/import colors",		std::bind(&BrowEdit::menuFileImportColors, this));
+	rootMenu->setAction("file/import-export/export heightmap",	std::bind(&BrowEdit::menuFileSaveHeightmap, this));
+	rootMenu->setAction("file/import-export/import heightmap",	std::bind(&BrowEdit::menuFileLoadHeightmap, this));
+	rootMenu->setAction("file/import-export/export obj",		std::bind(&BrowEdit::menuFileExportObj, this));
 
 	rootMenu->setAction("Actions/Lightmaps/Calculate Lightmaps",	std::bind(&BrowEdit::menuActionsLightmapCalculate, this));
 	rootMenu->setAction("Actions/Lightmaps/Smooth Lightmaps",		std::bind(&BrowEdit::menuActionsLightmapSmooth, this));
 	rootMenu->setAction("Actions/Lightmaps/Unique Lightmaps",		std::bind(&BrowEdit::menuActionsLightmapUnique, this));
+	rootMenu->setAction("Actions/Lightmaps/Clear Lightmaps",		std::bind(&BrowEdit::menuActionsLightmapClear, this));
 	rootMenu->setAction("Actions/Scale Down",						std::bind(&BrowEdit::menuActionsScaleDown, this));
+	rootMenu->setAction("Actions/Calculate quadtree",				std::bind(&BrowEdit::menuActionsCalculateQuadtree, this));
+	
+
 
 
 
@@ -268,6 +274,13 @@ void BrowEdit::init()
 	rootMenu->linkToggle("display/lights", &mapRenderer.drawLights);
 	rootMenu->linkToggle("display/sounds", &mapRenderer.drawSounds);
 	rootMenu->linkToggle("display/effects", &mapRenderer.drawEffects);
+	rootMenu->setAction("display/quadtree/Hide", std::bind(&BrowEdit::menuSetQuadtreeLevel, this, -1));
+	rootMenu->setAction("display/quadtree/1", std::bind(&BrowEdit::menuSetQuadtreeLevel, this, 0));
+	rootMenu->setAction("display/quadtree/2", std::bind(&BrowEdit::menuSetQuadtreeLevel, this, 1));
+	rootMenu->setAction("display/quadtree/3", std::bind(&BrowEdit::menuSetQuadtreeLevel, this, 2));
+	rootMenu->setAction("display/quadtree/4", std::bind(&BrowEdit::menuSetQuadtreeLevel, this, 3));
+	rootMenu->setAction("display/quadtree/5", std::bind(&BrowEdit::menuSetQuadtreeLevel, this, 4));
+
 	rootMenu->setAction("editmode/textureedit", std::bind(&BrowEdit::setEditMode, this, EditMode::TextureEdit));
 	rootMenu->setAction("editmode/objectedit", std::bind(&BrowEdit::setEditMode, this, EditMode::ObjectEdit));
 	rootMenu->setAction("editmode/heightedit", std::bind(&BrowEdit::setEditMode, this, EditMode::HeightEdit));
@@ -357,9 +370,6 @@ void BrowEdit::update( double elapsedTime )
 	mapRenderer.drawTextureGrid = dynamic_cast<blib::wm::ToggleMenuItem*>(rootMenu->getItem("display/grid"))->getValue() && editMode == EditMode::TextureEdit; // TODO: fix this
 	mapRenderer.drawObjectGrid = dynamic_cast<blib::wm::ToggleMenuItem*>(rootMenu->getItem("display/grid"))->getValue() && (editMode == EditMode::ObjectEdit || editMode == EditMode::HeightEdit || editMode == EditMode::DetailHeightEdit || editMode == EditMode::WallEdit); // TODO: fix this
 	mapRenderer.drawGat = editMode == EditMode::GatEdit || editMode == EditMode::DetailGatEdit || editMode == EditMode::GatTypeEdit;
-
-	if (mouseState.leftButton)
-		mouseRay = mapRenderer.mouseRay;
 
 
 
@@ -1270,6 +1280,18 @@ void BrowEdit::setObjectEditMode(ObjectEditModeTool newMode)
 	rootMenu->setToggleValue("objecttools/rotate", objectEditModeTool == ObjectEditModeTool::Rotate);
 }
 
+
+void BrowEdit::menuSetQuadtreeLevel(int newLevel)
+{
+	mapRenderer.drawQuadTreeLevel = newLevel;
+	dynamic_cast<blib::wm::ToggleMenuItem*>(rootMenu->getItem("display/quadtree/Hide"))->setValue(newLevel == -1);
+	dynamic_cast<blib::wm::ToggleMenuItem*>(rootMenu->getItem("display/quadtree/1"))->setValue(newLevel == 0);
+	dynamic_cast<blib::wm::ToggleMenuItem*>(rootMenu->getItem("display/quadtree/2"))->setValue(newLevel == 1);
+	dynamic_cast<blib::wm::ToggleMenuItem*>(rootMenu->getItem("display/quadtree/3"))->setValue(newLevel == 2);
+	dynamic_cast<blib::wm::ToggleMenuItem*>(rootMenu->getItem("display/quadtree/4"))->setValue(newLevel == 3);
+	dynamic_cast<blib::wm::ToggleMenuItem*>(rootMenu->getItem("display/quadtree/5"))->setValue(newLevel == 4);
+}
+
 void BrowEdit::addModel(const std::string &fileName)
 {
 	auto newModel = new Rsw::Model();
@@ -1297,7 +1319,7 @@ void BrowEdit::addLight(const json &properties)
 	auto newLight = new Rsw::Light();
 	newObject = newLight;
 	newLight->matrixCached = false;
-	newLight->name = properties["name"];
+	newLight->name = properties["name"].get<std::string>();
 
 	newLight->position = glm::vec3(mapRenderer.mouse3d.x - map->getGnd()->width * 5, -mapRenderer.mouse3d.y, -mapRenderer.mouse3d.z + (10 + 5 * map->getGnd()->height));;
 	newLight->rotation = glm::vec3(0, 0, 0);
@@ -1315,6 +1337,40 @@ void BrowEdit::addLight(const json &properties)
 		newLight->color = glm::vec3(properties["color"][0], properties["color"][1], properties["color"][2]);
 
 	map->getRsw()->objects.push_back(newLight);
+}
+
+void BrowEdit::addEffect(const json& properties)
+{
+	auto newEffect = new Rsw::Effect();
+	newObject = newEffect;
+	newEffect->matrixCached = false;
+	newEffect->name = properties["constant"].get<std::string>();
+
+	newEffect->position = glm::vec3(mapRenderer.mouse3d.x - map->getGnd()->width * 5, -mapRenderer.mouse3d.y, -mapRenderer.mouse3d.z + (10 + 5 * map->getGnd()->height));;
+	newEffect->rotation = glm::vec3(0, 0, 0);
+	newEffect->scale = glm::vec3(1, 1, 1);
+	newEffect->id = properties["id"].get<int>();
+	newEffect->loop = 1;
+	newEffect->param1 = 0;
+	newEffect->param2 = 0;
+	newEffect->param3 = 0;
+	newEffect->param4 = 0;
+
+
+	if (properties.find("loop") != properties.end())
+		newEffect->loop = properties["loop"].get<float>();
+	if (properties.find("param1") != properties.end())
+		newEffect->loop = properties["param1"].get<float>();
+	if (properties.find("param2") != properties.end())
+		newEffect->loop = properties["param2"].get<float>();
+	if (properties.find("param3") != properties.end())
+		newEffect->loop = properties["param3"].get<float>();
+	if (properties.find("param4") != properties.end())
+		newEffect->loop = properties["param4"].get<float>();
+
+
+
+	map->getRsw()->objects.push_back(newEffect);
 }
 
 void BrowEdit::perform(Action* action)

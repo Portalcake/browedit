@@ -4,6 +4,7 @@
 #include <blib/wm/Window.h>
 #include <blib/wm/widgets/Image.h>
 #include <blib/wm/widgets/TreeView.h>
+#include <blib/TextureMap.h>
 
 #include <BroLib/Rsw.h>
 
@@ -15,19 +16,19 @@
 
 class BrowEdit;
 class Map;
-class Rsm;
+class IRsm;
 
 namespace blib { class FBO; };
 
 class ModelWidget : public blib::wm::Widget
 {
-	Rsm* rsm;
+	IRsm* rsm;
 	BrowEdit* browedit;
 
 	blib::FBO* fbo;
 	float rotation;
 public:
-	ModelWidget(Rsm* rsm, blib::ResourceManager* resourceManager, BrowEdit* browedit);
+	ModelWidget(IRsm* rsm, blib::ResourceManager* resourceManager, BrowEdit* browedit);
 	~ModelWidget();
 	virtual void draw(blib::SpriteBatch &spriteBatch, glm::mat4 matrix, blib::Renderer* renderer) const;
 };
@@ -36,6 +37,11 @@ public:
 class ObjectWindow : public blib::wm::Window
 {
 	static blib::Texture* lightTexture;
+	static blib::Texture* effectTexture;
+	static blib::TextureMap* effectTextureMap;
+	static std::map<int, blib::TextureMap::TexInfo*> effectTextureInfo;
+
+
 	class ObjectTreeNode : public blib::wm::widgets::TreeView::TreeNode
 	{
 	public:
@@ -61,6 +67,7 @@ class ObjectWindow : public blib::wm::Window
 	std::map<std::string, std::string> textureFiles;
 
 	json lights;
+	json effects;
 
 	blib::wm::widgets::TreeView::TreeNode* newModelsNode;
 	blib::wm::widgets::TreeView::TreeNode* newSoundsNode;
@@ -80,6 +87,7 @@ public:
 	void updateObjects(Map* map);
 	void setModelDirectory(const std::string &dir);
 	void setLightDirectory(std::string dir);
+	void setEffectDirectory(std::string dir);
 
 	virtual void arrangeComponents(int oldWidth, int oldHeight);
 };

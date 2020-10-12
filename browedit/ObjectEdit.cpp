@@ -14,6 +14,9 @@
 #include "actions/GroupAction.h"
 
 #include "windows/ModelPropertiesWindow.h"
+#include "windows/EffectPropertiesWindow.h"
+#include "windows/SoundPropertiesWindow.h"
+#include "windows/LightPropertiesWindow.h"
 #include "windows/ObjectWindow.h"
 
 using blib::util::Log;
@@ -73,9 +76,9 @@ void BrowEdit::objectEditUpdate()
 						for (size_t i = 0; i < map->getRsw()->objects.size(); i++)
 						{
 							Rsw::Object* o = map->getRsw()->objects[i];
-							glm::vec2 pos = glm::vec2(map->getGnd()->width * 5 + o->position.x, 10 + 5 * map->getGnd()->height - o->position.z);
-							float dist = glm::length(pos - glm::vec2(mapRenderer.mouse3d.x, mapRenderer.mouse3d.z));
-							std::vector<glm::vec3> collisions = o->collisions(mapRenderer.mouseRay);
+							//glm::vec2 pos = glm::vec2(map->getGnd()->width * 5 + o->position.x, 10 + 5 * map->getGnd()->height - o->position.z);
+							//float dist = glm::length(pos - glm::vec2(mapRenderer.mouse3d.x, mapRenderer.mouse3d.z));
+							std::vector<glm::vec3> collisions = o->collisions(mapRenderer.mouseRay, map);
 							if (!collisions.empty())
 							{
 								if (o->selected)
@@ -112,7 +115,7 @@ void BrowEdit::objectEditUpdate()
 						Rsw::Object* o = map->getRsw()->objects[i];
 						glm::vec2 pos = glm::vec2(map->getGnd()->width * 5 + o->position.x, 10 + 5 * map->getGnd()->height - o->position.z);
 						float dist = glm::length(pos - glm::vec2(mapRenderer.mouse3d.x, mapRenderer.mouse3d.z));
-						std::vector<glm::vec3> collisions = o->collisions(mapRenderer.mouseRay);
+						std::vector<glm::vec3> collisions = o->collisions(mapRenderer.mouseRay, map);
 						o->selected = false;
 						if (collisions.size() > 0)
 						{
@@ -129,7 +132,7 @@ void BrowEdit::objectEditUpdate()
 
 					if (closestObject)
 					{
-						closestObject->selected = closestObject->collides(mapRenderer.mouseRay);
+						closestObject->selected = closestObject->collides(mapRenderer.mouseRay, map);
 						if (closestObject->selected && mouseState.clickcount == 2)
 						{
 							if (closestObject->type == Rsw::Object::Type::Model)
@@ -297,6 +300,22 @@ void BrowEdit::objectEditUpdate()
 
 	if (!wm->keyPressed)
 	{
+		if (keyState.isPressed(blib::Key::ENTER) && !lastKeyState.isPressed(blib::Key::ENTER))
+		{
+			Rsw::Object* o = nullptr;
+			for (auto object : map->getRsw()->objects)
+				if (object->selected)
+					o = object;
+
+			if (o->type == Rsw::Object::Type::Model)
+				new ModelPropertiesWindow((Rsw::Model*)o, resourceManager, this);
+			if (o->type == Rsw::Object::Type::Effect)
+				new EffectPropertiesWindow((Rsw::Effect*)o, resourceManager, this);
+			if (o->type == Rsw::Object::Type::Light)
+				new LightPropertiesWindow(dynamic_cast<Rsw::Light*>(o), resourceManager, this);
+			if (o->type == Rsw::Object::Type::Sound)
+				new SoundPropertiesWindow(dynamic_cast<Rsw::Sound*>(o), resourceManager, this);
+		}
 		if (keyState.isPressed(blib::Key::DEL) && !lastKeyState.isPressed(blib::Key::DEL))
 		{
 			deleteSelectedObjects();

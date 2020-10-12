@@ -59,7 +59,7 @@ void BrowEdit::menuActionsLightmapCalculate()
 			std::vector<glm::vec3> quad;
 			quad.resize(4);
 			float t;
-			for (int i = 0; i < mapQuads.size(); i += 4)
+			for (std::size_t i = 0; i < mapQuads.size(); i += 4)
 			{
 				for (int ii = 0; ii < 4; ii++)
 					quad[ii] = mapQuads[i + ii];
@@ -127,7 +127,7 @@ void BrowEdit::menuActionsLightmapCalculate()
 				bool collides = false;
 				for (Rsw::Object* o : map->getRsw()->objects)
 				{
-					if (o->collides(ray))
+					if (o->collides(ray, map))
 					{
 						collides = true;
 						break;
@@ -258,7 +258,6 @@ void BrowEdit::menuActionsLightmapCalculate()
 		for (auto &t : threads)
 			t.join();
 
-
 		/*Gnd::Cube* cube = map->getGnd()->cubes[63][31];
 		for (int i = 0; i < 3; i++)
 			if (cube->tileIds[i] != -1)
@@ -266,6 +265,8 @@ void BrowEdit::menuActionsLightmapCalculate()
 
 
 		map->getGnd()->makeLightmapBorders();
+		map->getGnd()->cleanLightmaps();
+		mapRenderer.setAllDirty();
 		window->close();
 	});
 
@@ -295,6 +296,14 @@ void BrowEdit::menuActionsLightmapUnique()
 	if (!map)
 		return;
 	map->getGnd()->makeLightmapsUnique();
+	mapRenderer.setAllDirty();
+}
+
+void BrowEdit::menuActionsLightmapClear()
+{
+	if (!map)
+		return;
+	map->getGnd()->makeLightmapsClear();
 	mapRenderer.setAllDirty();
 }
 
@@ -379,4 +388,12 @@ void BrowEdit::menuActionsScaleDown()
 	mapRenderer.setMap(newMap);
 	textureWindow->updateTextures(newMap);
 	objectWindow->updateObjects(newMap);
+}
+
+
+
+
+void BrowEdit::menuActionsCalculateQuadtree()
+{
+	map->getRsw()->recalculateQuadTree(map->getGnd());
 }

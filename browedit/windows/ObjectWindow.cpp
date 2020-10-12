@@ -2,6 +2,7 @@
 #include "ModelPropertiesWindow.h"
 #include "EffectPropertiesWindow.h"
 #include "LightPropertiesWindow.h"
+#include "SoundPropertiesWindow.h"
 #include "../BrowEdit.h"
 #include "../Camera.h"
 
@@ -33,6 +34,10 @@ using blib::util::Log;
 
 
 blib::Texture* ObjectWindow::lightTexture = nullptr;
+blib::Texture* ObjectWindow::effectTexture = nullptr;
+blib::TextureMap* ObjectWindow::effectTextureMap = nullptr;
+std::map<int, blib::TextureMap::TexInfo*> ObjectWindow::effectTextureInfo;
+
 
 ObjectWindow::ObjectWindow(blib::ResourceManager* resourceManager, BrowEdit* browEdit) : blib::wm::Window("Objects", "ObjectWindow.json", resourceManager)
 {
@@ -40,6 +45,11 @@ ObjectWindow::ObjectWindow(blib::ResourceManager* resourceManager, BrowEdit* bro
 	this->resourceManager = resourceManager;
 	if (!lightTexture)
 		lightTexture = resourceManager->getResource<blib::Texture>("assets/light.png");
+	if (!effectTexture)
+		effectTexture = resourceManager->getResource<blib::Texture>("assets/effect.png");
+	if (!effectTextureMap)
+		effectTextureMap = resourceManager->getResource<blib::TextureMap>(2048, 2048);
+
 	x = 1000;
 	y = 10;
 	textureSize = 128;
@@ -71,6 +81,8 @@ ObjectWindow::ObjectWindow(blib::ResourceManager* resourceManager, BrowEdit* bro
 				new EffectPropertiesWindow((Rsw::Effect*)node->object, resourceManager, browEdit);
 			if (node->object->type == Rsw::Object::Type::Light)
 				new LightPropertiesWindow(dynamic_cast<Rsw::Light*>(node->object), resourceManager, browEdit);
+			if (node->object->type == Rsw::Object::Type::Sound)
+				new SoundPropertiesWindow(dynamic_cast<Rsw::Sound*>(node->object), resourceManager, browEdit);
 
 
 		}
@@ -116,10 +128,10 @@ ObjectWindow::ObjectWindow(blib::ResourceManager* resourceManager, BrowEdit* bro
 	tree->root = new blib::wm::widgets::TreeView::TreeNode();
 	newModelsNode = new blib::wm::widgets::TreeView::TreeNode("models", tree->root);
 	newLightsNode = new blib::wm::widgets::TreeView::TreeNode("lights", tree->root);
+	newEffectsNode = new blib::wm::widgets::TreeView::TreeNode("effects", tree->root);
 	loadModelList();
-	lights = blib::util::FileSystem::getJson("assets/lights.json");
 	std::function<void(const json&, blib::wm::widgets::TreeView::TreeNode*)> addDir;
-	addDir = [&addDir](const json& data, blib::wm::widgets::TreeView::TreeNode* node)
+	addDir = [&addDir, this](const json& data, blib::wm::widgets::TreeView::TreeNode* node)
 	{
 		for (auto item : data)
 		{
@@ -128,9 +140,21 @@ ObjectWindow::ObjectWindow(blib::ResourceManager* resourceManager, BrowEdit* bro
 				auto newNode = new blib::wm::widgets::TreeView::TreeNode(item["name"], node);
 				addDir(item["items"], newNode);
 			}
+			else
+				if (data == effects) {
+					int id = item["id"].get<int>();
+					if(blib::util::FileSystem::exists("assets/textures/effects/" + std::to_string(id) + ".png"))
+						effectTextureInfo[id] = effectTextureMap->addTexture("assets/textures/effects/" + std::to_string(id) + ".png");
+				}
 		}
 	};
+
+
+	lights = blib::util::FileSystem::getJson("assets/lights.json");
 	addDir(lights, newLightsNode);
+
+	effects = blib::util::FileSystem::getJson("assets/effects.json");
+	addDir(effects, newEffectsNode);
 
 
 	tree->buildList();
@@ -149,6 +173,8 @@ ObjectWindow::ObjectWindow(blib::ResourceManager* resourceManager, BrowEdit* bro
 				setModelDirectory(dir);
 			else if (n == newLightsNode)
 				setLightDirectory(dir);
+			else if (n == newEffectsNode)
+				setEffectDirectory(dir);
 		}
 		return true;
 	});
@@ -228,6 +254,8 @@ void ObjectWindow::updateObjects(Map* map)
 	if (!map)
 		return;
 
+	int effectCount = 0;
+
 	for (size_t i = 0; i < map->getRsw()->objects.size(); i++)
 	{
 		Rsw::Object* obj = map->getRsw()->objects[i];
@@ -250,7 +278,13 @@ void ObjectWindow::updateObjects(Map* map)
 				child = new blib::wm::widgets::TreeView::TreeNode(folders[i], node);
 			node = child;
 		}
-		new ObjectTreeNode(folders[folders.size() - 1], obj, node);
+		std::string name = folders[folders.size() - 1];
+		if (obj->type == Rsw::Object::Type::Effect)
+			name += " (" + std::to_string(dynamic_cast<Rsw::Effect*>(obj)->id) + ")";
+		if (obj->type == Rsw::Object::Type::Effect && dynamic_cast<Rsw::Effect*>(obj)->id == 974)
+			name += " #" + std::to_string(effectCount++);
+		
+		new ObjectTreeNode(name, obj, node);
 	}
 	items->buildList();
 }
@@ -397,7 +431,106 @@ void ObjectWindow::setLightDirectory(std::string directory)
 		if (item["type"] == "dir")
 			continue;
 		blib::wm::widgets::Label* label = new blib::wm::widgets::Label();
-		label->text = item["name"];
+		label->text = item["name"].get<std::string>();
+		label->width = textureSize;
+		label->height = 12;
+		label->x = px;
+		label->y = py + textureSize;
+		panel->add(label);
+		px += textureSize;
+		if (px + textureSize > panel->width)
+		{
+			py += textureSize + 12;
+			px = 0;
+		}
+	}
+
+
+	Log::out << "Time taken: " << blib::util::Profiler::getAppTime() - start << Log::newline;
+	panel->scrollX = 0;
+	panel->scrollY = 0;
+	panel->internalHeight = py + textureSize + 12;
+
+}
+
+
+
+
+
+void ObjectWindow::setEffectDirectory(std::string directory)
+{
+	Log::out << "ObjectWindow::setEffectDirectory(" << directory << ")" << Log::newline;
+	blib::wm::widgets::ScrollPanel* panel = getComponent<blib::wm::widgets::ScrollPanel>("lstAllTextures");
+	panel->clear();
+	panel->internalWidth = panel->width;
+
+
+
+	int px = 0;
+	int py = 0;
+
+	double start = blib::util::Profiler::getAppTime();
+	json currentPath = effects;
+	while (directory != "")
+	{
+		std::string d = directory.substr(0, directory.find("/"));
+		for (const auto& p : currentPath)
+			if (p["type"] == "dir" && p["name"] == d)
+			{
+				currentPath = p["items"];
+				break;
+			}
+		directory = directory.substr(directory.find("/") + 1);
+	}
+
+	for (const auto& item : currentPath)
+	{
+		if (item.find("type") != item.end() && item["type"] == "dir")
+			continue;
+		blib::wm::widgets::Image* widget;
+		int id = item["id"].get<int>();
+
+		if(effectTextureInfo[id] == nullptr)
+			widget = new blib::wm::widgets::Image(effectTexture);
+		else
+			widget = new blib::wm::widgets::Image(effectTextureInfo[id]);
+
+		if (item.find("loop") != item.end())
+			widget->bgcolor = glm::vec4(0.9, 0.9, 1.0f, 1.0f);
+
+		widget->width = textureSize;
+		widget->height = textureSize;
+		widget->x = px;
+		widget->y = py;
+		panel->add(widget);
+
+		widget->addClickHandler([this, item](int, int, int) {
+			Log::out << item << Log::newline;
+			std::for_each(browEdit->map->getRsw()->objects.begin(), browEdit->map->getRsw()->objects.end(), [](Rsw::Object* o) { o->selected = false; });
+			browEdit->addEffect(item);
+			getComponent<blib::wm::widgets::Button>("btnExpand")->onMouseClick(0, 0, 1);
+			return true;
+			});
+
+
+		px += textureSize;
+
+		if (px + textureSize > panel->width)
+		{
+			py += textureSize + 12;
+			px = 0;
+		}
+	}
+
+	px = 0;
+	py = 0;
+
+	for (const auto& item : currentPath)
+	{
+		if (item.find("type") != item.end() && item["type"] == "dir")
+			continue;
+		blib::wm::widgets::Label* label = new blib::wm::widgets::Label();
+		label->text = std::to_string(item["id"].get<int>()) + " - " + item["constant"].get<std::string>();
 		label->width = textureSize;
 		label->height = 12;
 		label->x = px;
@@ -435,11 +568,7 @@ void ObjectWindow::setLightDirectory(std::string directory)
 
 
 
-
-
-
-
-ModelWidget::ModelWidget(Rsm* rsm, blib::ResourceManager* resourceManager, BrowEdit* browedit)
+ModelWidget::ModelWidget(IRsm* rsm, blib::ResourceManager* resourceManager, BrowEdit* browedit)
 {
 	this->rsm = rsm;
 	this->browedit = browedit;

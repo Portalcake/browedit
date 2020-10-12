@@ -3,6 +3,7 @@
 #include "Gnd.h"
 #include "Rsw.h"
 #include "Rsm.h"
+#include "Rsm2.h"
 #include "Gat.h"
 #include "Renderer.h"
 
@@ -35,7 +36,7 @@ MapRenderer::MapRenderer() : mouseRay(glm::vec3(0, 0,0), glm::vec3(1,0,0))
 	drawSounds = true;
 	drawTextureGrid = true;
 	drawObjectGrid = true;
-	drawQuadTree = true;
+	drawQuadTreeLevel = -1;
 	fbo = NULL;
 	fov = glm::radians(75.0f);
 	mouse3d = glm::vec4(0, 0, 0, -1);
@@ -323,14 +324,16 @@ void MapRenderer::render(blib::Renderer* renderer, glm::vec2 mousePosition)
 	highlightRenderState.activeShader->setUniform(HighlightShaderUniforms::modelviewMatrix, glm::translate(cameraMatrix, glm::vec3(map->getGnd()->width*5, 0, map->getGnd()->height*5)));
 	highlightRenderState.activeTexture[0] = NULL;
 
-	/* quadtree visualisation
-	map->getRsw()->quadtree->foreachLevel([&renderer, this](Rsw::QuadTreeNode* node, int level) {
-		if (level == 4)
-		{
-			std::vector<blib::VertexP3> verts = blib::Shapes::linebox(node->bbox.min * glm::vec3(1, -1, -1), node->bbox.max * glm::vec3(1, -1, -1));
-			renderer->drawLines(verts, highlightRenderState);
-		}
-	});*/
+	if (drawQuadTreeLevel > -1)
+	{
+		map->getRsw()->quadtree->foreachLevel([&renderer, this](Rsw::QuadTreeNode* node, int level) {
+			if (level == drawQuadTreeLevel)
+			{
+				std::vector<blib::VertexP3> verts = blib::Shapes::linebox(node->bbox.min * glm::vec3(1, -1, -1), node->bbox.max * glm::vec3(1, -1, -1));
+				renderer->drawLines(verts, highlightRenderState);
+			}
+			});
+	}
 
 	
 
@@ -466,6 +469,9 @@ void MapRenderer::init( blib::ResourceManager* resourceManager, blib::App* app )
 
 	gatTexture = resourceManager->getResource<blib::Texture>("assets/textures/gat.png");
 
+	font = resourceManager->getResource<blib::Font>("tahoma", 72.0f);
+	font->utf8 = false;
+
 }
 
 void MapRenderer::setMap(const Map* map)
@@ -520,7 +526,7 @@ void MapRenderer::renderGnd(blib::Renderer* renderer)
 
 	if (gndShadowDirty)
 	{
-		char shadowData[4] = { 0, 0, 0, 0xffu };
+		char shadowData[4] = { 0, 0, 0, (char)0xffu };
 		renderer->setTextureSubImage(gndNoShadow, 0, 0, 1, 1, shadowData);
 
 		new blib::BackgroundTask<char*>(app,
@@ -551,6 +557,7 @@ void MapRenderer::renderGnd(blib::Renderer* renderer)
 					if (y * 8 >= 2048)
 					{
 						Log::out << "Lightmap too big!" << Log::newline;
+						y = 0;
 					}
 				}
 			}
@@ -771,6 +778,8 @@ void MapRenderer::renderModel(Rsw::Model* model, blib::Renderer* renderer)
 		return;
 	if (!model->model)
 		return;
+	Rsm* rsmModel = dynamic_cast<Rsm*>(model->model);
+	Rsm2* rsm2Model = dynamic_cast<Rsm2*>(model->model);
 	if (!model->matrixCached)
 	{
 		model->matrixCache = glm::mat4();
@@ -779,20 +788,34 @@ void MapRenderer::renderModel(Rsw::Model* model, blib::Renderer* renderer)
 		model->matrixCache = glm::rotate(model->matrixCache, -glm::radians(model->rotation.z), glm::vec3(0, 0, 1));
 		model->matrixCache = glm::rotate(model->matrixCache, -glm::radians(model->rotation.x), glm::vec3(1, 0, 0));
 		model->matrixCache = glm::rotate(model->matrixCache, glm::radians(model->rotation.y), glm::vec3(0, 1, 0));
-		model->matrixCache = glm::scale(model->matrixCache, glm::vec3(model->scale.x, -model->scale.y, model->scale.z));
-		model->matrixCache = glm::translate(model->matrixCache, glm::vec3(-model->model->realbbrange.x, model->model->realbbmin.y, -model->model->realbbrange.z));
+		if (rsmModel)
+		{
+			model->matrixCache = glm::scale(model->matrixCache, glm::vec3(model->scale.x, -model->scale.y, model->scale.z));
+			model->matrixCache = glm::translate(model->matrixCache, glm::vec3(-rsmModel->realbbrange.x, rsmModel->realbbmin.y, -rsmModel->realbbrange.z));
+		}
+		if (rsm2Model)
+		{
+			model->matrixCache = glm::scale(model->matrixCache, glm::vec3(model->scale.x, model->scale.y, model->scale.z));
+		}
 		model->matrixCached = true;
 
-
-		std::vector<blib::VertexP3> verts = blib::Shapes::box(model->model->realbbmin, model->model->realbbmax);
-		for (size_t i = 0; i < verts.size(); i++)
-			verts[i].position = glm::vec3(model->matrixCache * glm::vec4(glm::vec3(1,-1,1) * verts[i].position,1.0f));
-		model->aabb.min = glm::vec3(99999999, 99999999, 99999999);
-		model->aabb.max = glm::vec3(-99999999, -99999999, -99999999);
-		for (size_t i = 0; i < verts.size(); i++)
+		if (rsmModel)
 		{
-			model->aabb.min = glm::min(model->aabb.min, verts[i].position);
-			model->aabb.max = glm::max(model->aabb.max, verts[i].position);
+			std::vector<blib::VertexP3> verts = blib::Shapes::box(rsmModel->realbbmin, rsmModel->realbbmax);
+			for (size_t i = 0; i < verts.size(); i++)
+				verts[i].position = glm::vec3(model->matrixCache * glm::vec4(glm::vec3(1, -1, 1) * verts[i].position, 1.0f));
+			model->aabb.min = glm::vec3(99999999, 99999999, 99999999);
+			model->aabb.max = glm::vec3(-99999999, -99999999, -99999999);
+			for (size_t i = 0; i < verts.size(); i++)
+			{
+				model->aabb.min = glm::min(model->aabb.min, verts[i].position);
+				model->aabb.max = glm::max(model->aabb.max, verts[i].position);
+			}
+		}
+		if (rsm2Model)
+		{
+			model->aabb.min = glm::vec3(-99, -99, -99);
+			model->aabb.max = glm::vec3(99, 99, 99);
 		}
 	}
 
@@ -805,11 +828,15 @@ void MapRenderer::renderModel(Rsw::Model* model, blib::Renderer* renderer)
 
 	rswRenderState.activeShader->setUniform(RswShaderAttributes::shadeType, model->model->shadeType);
 	rswRenderState.activeShader->setUniform(RswShaderAttributes::ModelMatrix2, model->matrixCache);
+
 	renderMesh(model->model->rootMesh, glm::mat4(), model->model->renderer, renderer);
 }
 
-void MapRenderer::renderMesh(Rsm::Mesh* mesh, const glm::mat4 &matrix, RsmModelRenderInfo* renderInfo, blib::Renderer* renderer)
+void MapRenderer::renderMesh(IRsm::IMesh* mesh, const glm::mat4 &matrix, RsmModelRenderInfo* renderInfo, blib::Renderer* renderer)
 {
+	Rsm::Mesh* rsmMesh = dynamic_cast<Rsm::Mesh*>(mesh);
+	Rsm2::Mesh* rsm2Mesh = dynamic_cast<Rsm2::Mesh*>(mesh);
+
 	if (mesh->renderer == NULL)
 	{
 		mesh->renderer = new RsmMeshRenderInfo();
@@ -817,9 +844,9 @@ void MapRenderer::renderMesh(Rsm::Mesh* mesh, const glm::mat4 &matrix, RsmModelR
 		std::map<int, std::vector<blib::VertexP3T2N3> > verts;
 		for (size_t i = 0; i < mesh->faces.size(); i++)
 		{
-			glm::vec3 normal = glm::normalize(glm::cross(mesh->vertices[mesh->faces[i]->vertices[1]] - mesh->vertices[mesh->faces[i]->vertices[0]],	mesh->vertices[mesh->faces[i]->vertices[2]] - mesh->vertices[mesh->faces[i]->vertices[0]]));
+			glm::vec3 normal = glm::normalize(glm::cross(mesh->vertices[mesh->faces[i]->vertexIds[1]] - mesh->vertices[mesh->faces[i]->vertexIds[0]],	mesh->vertices[mesh->faces[i]->vertexIds[2]] - mesh->vertices[mesh->faces[i]->vertexIds[0]]));
 			for (int ii = 0; ii < 3; ii++)
-				verts[mesh->faces[i]->texIndex].push_back(blib::VertexP3T2N3(mesh->vertices[mesh->faces[i]->vertices[ii]], mesh->texCoords[mesh->faces[i]->texvertices[ii]], normal));
+				verts[mesh->faces[i]->texId].push_back(blib::VertexP3T2N3(mesh->vertices[mesh->faces[i]->vertexIds[ii]], mesh->texCoords[mesh->faces[i]->texCoordIds[ii]], normal));
 		}
 
 		std::vector<blib::VertexP3T2N3> allVerts;
@@ -837,12 +864,13 @@ void MapRenderer::renderMesh(Rsm::Mesh* mesh, const glm::mat4 &matrix, RsmModelR
 		mesh->renderer->matrix = matrix * mesh->matrix1 * mesh->matrix2;
 		mesh->renderer->matrixSub = matrix * mesh->matrix1;
 	}
-	if (!mesh->frames.empty() || mesh->matrixDirty)
+	
+	if (rsmMesh && (!rsmMesh->frames.empty() || rsmMesh->matrixDirty))
 	{
-		mesh->matrixDirty = false;
-		mesh->calcMatrix1();
-		mesh->renderer->matrix = matrix * mesh->matrix1 * mesh->matrix2;
-		mesh->renderer->matrixSub = matrix * mesh->matrix1;
+		rsmMesh->matrixDirty = false;
+		rsmMesh->calcMatrix1();
+		rsmMesh->renderer->matrix = matrix * rsmMesh->matrix1 * rsmMesh->matrix2;
+		rsmMesh->renderer->matrixSub = matrix * rsmMesh->matrix1;
 	}
 
 	RsmMeshRenderInfo* meshInfo = mesh->renderer;
@@ -853,15 +881,16 @@ void MapRenderer::renderMesh(Rsm::Mesh* mesh, const glm::mat4 &matrix, RsmModelR
 
 		for (VboIndex& it : meshInfo->indices)
 		{
-			rswRenderState.activeTexture[0] = renderInfo->textures[mesh->textures[it.texture]];
+			if (rsmMesh)
+				rswRenderState.activeTexture[0] = renderInfo->textures[rsmMesh->textures[it.texture]];
+			if (rsm2Mesh)
+				rswRenderState.activeTexture[0] = renderInfo->textures[rsm2Mesh->textures[it.texture]];
 			renderer->drawTriangles<blib::VertexP3T2N3>(it.begin, it.count, rswRenderState);
 		}
 	}
 
 	for (size_t i = 0; i < mesh->children.size(); i++)
 		renderMesh(mesh->children[i], meshInfo->matrixSub, renderInfo, renderer);
-
-
 }
 
 void MapRenderer::resizeGl(int width, int height, int offsetx, int offsety)
@@ -902,6 +931,7 @@ void MapRenderer::setAllDirty()
 	gndTextureGridDirty = true;
 	gndShadowDirty = true;
 	gatDirty = true;
+	gndTileColorDirty = true;
 }
 
 void MapRenderer::renderObjects(blib::Renderer* renderer, bool selected)
@@ -976,22 +1006,38 @@ void MapRenderer::renderObjects(blib::Renderer* renderer, bool selected)
 				rswRenderState.activeShader->setUniform(RswShaderAttributes::lightDiffuse, dynamic_cast<Rsw::Light*>(o)->color);
 
 			renderer->drawTriangles(verts, 6, rswRenderState);
+
+			if (o->type == Rsw::Object::Type::Light)
+				rswRenderState.activeShader->setUniform(RswShaderAttributes::lightDiffuse, map->getRsw()->light.diffuse);
+
+
+			std::string name = o->name;
+			float len = font->textlen(name);
+
+			rswRenderState.activeShader->setUniform(RswShaderAttributes::ModelMatrix, glm::translate(o->matrixCache, glm::vec3(0,-3,0)));
+			rswRenderState.activeShader->setUniform(RswShaderAttributes::ModelMatrix2, glm::translate(glm::scale(billboardMatrix, glm::vec3(0.05f, -0.05f, 0.05f)), glm::vec3(-len/2,0,0)));
+			font->render(renderer, rswRenderState, name, glm::vec4(1,1,1,1));
+
+
+
 			rswRenderState.activeShader->setUniform(RswShaderAttributes::billboard, 0.0f);
-
-
 		}
 	}
 }
 
 
-void MapRenderer::renderMeshFbo(Rsm* rsm, float rotation, blib::FBO* fbo, blib::Renderer* renderer)
+void MapRenderer::renderMeshFbo(IRsm* rsm, float rotation, blib::FBO* fbo, blib::Renderer* renderer)
 {
 	blib::FBO* oldFbo = rswRenderState.activeFbo;
 
-	float dist = glm::max(glm::max(rsm->realbbmax.x - rsm->realbbmin.x, rsm->realbbmax.y - rsm->realbbmin.y), rsm->realbbmax.z - rsm->realbbmin.z);
+	float dist = 10;
+	Rsm* rsm1 = dynamic_cast<Rsm*>(rsm);
+	if(rsm1)
+		glm::max(glm::max(rsm1->realbbmax.x - rsm1->realbbmin.x, rsm1->realbbmax.y - rsm1->realbbmin.y), rsm1->realbbmax.z - rsm1->realbbmin.z);
 
 	rswRenderState.activeShader->setUniform(RswShaderAttributes::ProjectionMatrix, glm::perspective(glm::radians(75.0f), 1.0f, 0.1f, 250.0f));
-	rswRenderState.activeShader->setUniform(RswShaderAttributes::CameraMatrix, glm::lookAt(rsm->realbbrange * glm::vec3(1, -1, 1) + glm::vec3(0, -dist/3, -dist), rsm->realbbrange * glm::vec3(1, -1, 1), glm::vec3(0, 1, 0)));
+	if(rsm1)
+		rswRenderState.activeShader->setUniform(RswShaderAttributes::CameraMatrix, glm::lookAt(rsm1->realbbrange * glm::vec3(1, -1, 1) + glm::vec3(0, -dist/3, -dist), rsm1->realbbrange * glm::vec3(1, -1, 1), glm::vec3(0, 1, 0)));
 	rswRenderState.activeShader->setUniform(RswShaderAttributes::ModelMatrix, glm::mat4());
 	rswRenderState.activeShader->setUniform(RswShaderAttributes::ModelMatrix2, glm::scale(glm::rotate(glm::mat4(), glm::radians(rotation), glm::vec3(0, 1, 0)), glm::vec3(1, 1, 1)));
 	rswRenderState.activeShader->setUniform(RswShaderAttributes::billboard, 0.0f);
@@ -1009,7 +1055,8 @@ void MapRenderer::renderMeshFbo(Rsm* rsm, float rotation, blib::FBO* fbo, blib::
 	if(fbo != nullptr)
 		renderer->setViewPort(0,0, fbo->originalWidth, fbo->originalHeight);
 	renderer->clear(glm::vec4(0, 0, 0, 1), blib::Renderer::Color | blib::Renderer::Depth, rswRenderState);
-	renderMesh(rsm->rootMesh, glm::mat4(), rsm->renderer, renderer);
+	if(rsm1)
+		renderMesh(rsm1->rootMesh, glm::mat4(), rsm->renderer, renderer);
 	renderer->setViewPort(0, 0, width, height);
 
 	rswRenderState.activeFbo = oldFbo;
@@ -1017,7 +1064,7 @@ void MapRenderer::renderMeshFbo(Rsm* rsm, float rotation, blib::FBO* fbo, blib::
 }
 
 
-void MapRenderer::renderMesh(Rsm* rsm, const glm::mat4 &camera, blib::Renderer* renderer)
+void MapRenderer::renderMesh(IRsm* rsm, const glm::mat4 &camera, blib::Renderer* renderer)
 {
 	blib::FBO* oldFbo = rswRenderState.activeFbo;
 
@@ -1035,7 +1082,6 @@ void MapRenderer::renderMesh(Rsm* rsm, const glm::mat4 &camera, blib::Renderer* 
 	rswRenderState.activeVbo = NULL;
 	rswRenderState.activeFbo = nullptr;
 	rswRenderState.depthTest = true;
-
 
 	renderMesh(rsm->rootMesh, glm::mat4(), rsm->renderer, renderer);
 

@@ -81,7 +81,7 @@ class BrowEdit : public blib::App, public blib::MouseListener
 	glm::vec4 mouse3dstart;
 	glm::vec4 lastmouse3d;
 
-	blib::math::Ray mouseRay;
+	//blib::math::Ray mouseRay;
 
 	blib::Texture* gradientBackground;
 
@@ -173,7 +173,8 @@ public:
 	};
 	void setObjectEditMode(ObjectEditModeTool newMode);
 	void addModel(const std::string &fileName);
-	void addLight(const json &lightProperties);
+	void addLight(const json& lightProperties);
+	void addEffect(const json& effectProperties);
 
 	void perform(Action* action);
 	void undo();
@@ -225,11 +226,18 @@ public:
 	void menuFileLoadHeightmap();
 	void menuFileExportLightmap();
 	void menuFileExportObj();
+	void menuFileExportColors();
+	void menuFileImportColors();
 
 	void menuActionsLightmapCalculate();
 	void menuActionsLightmapSmooth();
 	void menuActionsLightmapUnique();
-
+	void menuActionsLightmapClear();
+	void menuActionsCalculateQuadtree();
 	void menuActionsScaleDown();
+
+
+	void menuSetQuadtreeLevel(int level);
+
 };
 
